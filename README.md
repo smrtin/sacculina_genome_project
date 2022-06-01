@@ -17,5 +17,10 @@ Here we document the analysis steps and provide a snakmake workflow.
 
 # Differential Expression analysis
 
+# Funding 
+This project was funded by the Deutsche Forschungsgemeinschaft (DFG) - Project number 252344899
+
+https://gepris.dfg.de/gepris/projekt/252344899
+
 
 
