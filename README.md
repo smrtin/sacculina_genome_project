@@ -9,7 +9,7 @@ This project aims to get a better understanding about the genetic and genomic fo
 
 Here we document the analysis steps and provide a snakmake workflow.
 
-## Prerequisits
+## Prerequisites
 
 # Workflow
 
