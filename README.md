@@ -26,6 +26,12 @@ Different steps of the workflow are performed with snakemake. Each step can be s
 
 ## Genome assembly
 
+The assembled genome and the corresponding raw data can be accessed via NCBI: https://www.ncbi.nlm.nih.gov/bioproject/659937
+
+The Genome was assembled with a combination of Nanopore long reads and Mate-Pair shortreads of an 8kb library. The longreads were filtered by length and only reads longer than 3kb were kept. Next the longreads were trimmed with PORECHOP  and assembled with FLYE. The illumina short reads were trimmed with FASTP and mapped to the flye assembly with BWA and sorted with SAMTOOLS. The Flye assembly was scaffolded with BESST and the mapped shortreads. Finally the draft assembly was improved with two rounds of pilon.
+
+The assembly was submitted to NCBI where a vector screen was performed. After cleaning the Genome assembly it was used for further analyis.
+
 ## Genome annotation 
 
 Genome annotation is performed with FUNANNOTATE. We use the genome and RNA-Seq data for training and external data during the prediction. As external data from other Cirripedia we downloaded available TSA files from NCBI with the '02_download_TSA_cirripedia.sh'-script. In addition tho these Sequence files we also downloaded and assembled RNA-Seq data from three cirriped species.
