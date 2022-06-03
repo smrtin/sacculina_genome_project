@@ -9,6 +9,10 @@ This project aims to get a better understanding about the genetic and genomic fo
 
 Here we document the analysis steps and provide a snakmake workflow.
 
+Sequences can be accessed under NCBI: 
+https://www.ncbi.nlm.nih.gov/bioproject/659937
+
+
 ## Prerequisites
 
 # Workflow
