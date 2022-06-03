@@ -1,0 +1,5 @@
+Sample	Repeat	Forward	Reverse
+SAC-M	SAC-M_rep1	SAC-M_S2_L001_R1_001.fastq.gz	SAC-M_S2_L001_R2_001.fastq.gz
+SAC-N	SAC-N_rep1	SAC-N_S3_L001_R1_001.fastq.gz	SAC-N_S3_L001_R2_001.fastq.gz
+SAC-S	SAC-S_rep1	SAC-S_S1_L001_R1_001.fastq.gz	SAC-S_S1_L001_R2_001.fastq.gz
+

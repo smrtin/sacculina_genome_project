@@ -1,0 +1,4 @@
+workflow/Snakefile
+workflow/Snakefile_fun
+workflow/container/funannotate.sif
+

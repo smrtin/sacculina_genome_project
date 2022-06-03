@@ -1,0 +1,302 @@
+##############################################
+# workflow for the SACCULINA Genome Assembly #
+##############################################
+
+
+configfile: "workflow/config/config.yaml"
+
+
+import pandas as pd 
+from os import listdir
+from os.path import isfile, join
+
+
+samples = pd.read_table(config["sample_info"] , dtype=str).set_index(["Sample"], drop=False)
+
+rule all:
+    input:
+        "results/genome_assembly/mapped_reads/Genome_read_ali.sort.bam",
+        "results/genome_assembly/mapped_reads_scaffolds/Genome_read_ali.sort.bam",
+        "results/genome_assembly/pilon_2/saca8_scaff1_p2.fasta"
+    shell:
+         """
+	echo "final step"	
+         """
+
+## selecting reads >3000 bp
+rule filter_long_reads:
+    input:
+        "resources/genome/saca_8.fasta"
+    output:
+        "results/genome_assembly/long_reads/saca_8_3k.fasta"
+    params:
+        min_length='3000',
+        max_length='1000000'
+    conda:
+        "envs/assembly.yaml"
+    shell:
+        """
+perl workflow/scripts/filterseqlength.pl {input} {params.min_length} {params.max_length} {output}
+        """
+
+
+rule trim_ont_reads:
+    input:
+        "results/genome_assembly/long_reads/saca_8_3k.fasta"
+    output:
+        "results/genome_assembly/long_reads/saca_8_3ktr.fasta"
+    threads:
+        30
+    conda:
+        "envs/assembly.yaml"
+    shell:
+        """
+porechop -t {threads} --discard_middle -i {input} -o {output}
+        """
+
+
+rule flye_assembly:
+    input:
+        "results/genome_assembly/long_reads/saca_8_3ktr.fasta"
+    output:
+        "results/genome_assembly/saca8_flye.fasta"
+    params:
+        out_dir="/results/genome_assembly/flye_assembly",
+        size="400m"
+    threads:
+        50
+    conda:
+        "envs/assembly.yaml"
+    shell:
+        """
+flye --nano-raw {input} --genome-size {params.size} --threads {threads} --out-dir {params.out_dir}
+sleep 100
+cp  {params.out_dir}/assembly.fasta {output} 
+        """
+
+rule trim_short_reads:
+    input:
+        R1="resources/genome/saca_8kb_A.fq", 
+        R2="resources/genome/saca_8kb_B.fq"
+    output:
+        R1="results/genome_assembly/trim_short/saca_8kb_A.fq",
+        R2="results/genome_assembly/trim_short/saca_8kb_B.fq"
+    threads: 16 
+    conda:
+        "envs/assembly.yaml"
+    shell:
+        """
+fastp \
+    -i {input.R1} \
+    -I {input.R2} \
+    -o {output.R1} \
+    -O {output.R2} \
+    --length_required 100 \
+    --low_complexity_filter \
+    --detect_adapter_for_pe \
+    --trim_poly_x \
+    --thread {threads} \
+    --json results/genome_assembly/trim_short/saca.fastp.json \
+    --html results/genome_assembly/trim_short/saca.fastp.html  
+    
+"""
+
+
+rule map_bwa:
+    input:
+        genome="results/genome_assembly/saca8_flye.fasta",
+        fwd="results/genome_assembly/trim_short/saca_8kb_A.fq", 
+        rev="results/genome_assembly/trim_short/saca_8kb_B.fq"
+    output:
+        "results/genome_assembly/mapped_reads/Genome_read_ali.sam"
+    threads: 32
+    params:
+        prefix="results/genome_assembly/mapped_reads/Genome"
+    conda:
+        "envs/assembly.yaml"
+    shell:
+        """
+bwa index -p {params.prefix} -a is {input.genome}
+
+sleep 100
+
+bwa mem -o {output} -t {threads} {params.prefix} {input.fwd} {input.rev}
+
+        """
+
+rule sam2bam:
+    input:
+        "results/genome_assembly/mapped_reads/Genome_read_ali.sam"
+    output:
+        bam="results/genome_assembly/mapped_reads/Genome_read_ali.bam",
+        sort="results/genome_assembly/mapped_reads/Genome_read_ali.sort.bam"
+    conda:
+        "envs/assembly.yaml"
+    shell:
+        """
+samtools view -Sb {input} > {output.bam}
+samtools sort {output.bam} > {output.sort}
+samtools index {output.sort}
+
+        """
+##should also include index in output files...
+
+
+### using mate-pairs for sacffolding with BESST v.2.0
+rule scaffolding_step:
+    input:
+        genome="results/genome_assembly/saca8_flye.fasta",
+        bam="results/genome_assembly/mapped_reads/Genome_read_ali.sort.bam"
+    output:
+        scaf="results/genome_assembly/scaffolding/BESST_output/pass1/Scaffolds_pass1.fa",
+        final="results/genome_assembly/saca8_scaff1.fasta"
+    params:
+        insert_size="7000",
+        std_dev="600",
+        out_dir="results/genome_assembly/scaffolding"
+    conda:
+        "envs/besst.yaml"
+    shell:
+        """
+runBESST --no_score \
+    -m {params.insert_size} \
+    -s {params.std_dev} \
+    -c {input.genome} \
+    -f {input.bam} \
+    -o {params.out_dir} \
+    -orientation rf
+
+sleep 100 
+cp {output.scaf} {output.final}
+
+    """
+
+rule map_bwa_scaffolds:
+    input:
+        fasta="results/genome_assembly/saca8_scaff1.fasta",
+        fwd="results/genome_assembly/trim_short/saca_8kb_A.fq", 
+        rev="results/genome_assembly/trim_short/saca_8kb_B.fq"
+    output:
+        "results/genome_assembly/mapped_reads_scaffolds/Genome_read_ali.sam"
+    threads: 32
+    params:
+        prefix="results/genome_assembly/mapped_reads_scaffolds/Genome"
+    conda:
+        "envs/assembly.yaml"
+    shell:
+        """
+bwa index -p {params.prefix} -a is {input.fasta}
+
+sleep 100
+
+bwa mem -o {output} -t {threads} {params.prefix} {input.fwd} {input.rev}
+
+        """
+
+rule sam2bam_scaffolds:
+    input:
+        "results/genome_assembly/mapped_reads_scaffolds/Genome_read_ali.sam"
+    output:
+        bam="results/genome_assembly/mapped_reads_scaffolds/Genome_read_ali.bam",
+        sort="results/genome_assembly/mapped_reads_scaffolds/Genome_read_ali.sort.bam"
+    conda:
+        "envs/assembly.yaml"
+    shell:
+        """
+samtools view -Sb {input} > {output.bam}
+samtools sort {output.bam} > {output.sort}
+samtools index {output.sort}
+
+        """
+### mapping shortreads & pilon polishing using saca8_scaff1.fasta from step before
+#spec = "saca8_scaff1"
+
+rule run_pilon_1:
+    input:
+        fasta="results/genome_assembly/saca8_scaff1.fasta",
+        bam="results/genome_assembly/mapped_reads_scaffolds/Genome_read_ali.sort.bam"
+    output:
+        "results/genome_assembly/pilon_1/saca8_scaff1_p1.fasta"
+    params:
+        prefix="results/genome_assembly/pilon_1/"
+    threads:
+        20
+    conda:
+        "envs/assembly.yaml"
+    shell:
+        """
+
+export _JAVA_OPTIONS='-Xmx500g'
+mkdir -p {params.prefix}
+
+pilon --genome {input.fasta} --fix snps,indels,gaps --changes \
+    --frags {input.bam} \
+    --output {output}
+
+        """
+
+
+rule map_bwa_pilon:
+    input:
+        fasta="results/genome_assembly/pilon_1/saca8_scaff1_p1.fasta", 
+        fwd="results/genome_assembly/trim_short/saca_8kb_A.fq", 
+        rev="results/genome_assembly/trim_short/saca_8kb_B.fq"
+    output:
+        "results/genome_assembly/mapped_reads_pilon1/Genome_read_ali.sam"
+    threads: 32
+    params:
+        prefix="results/genome_assembly/mapped_reads_pilon1/Genome"
+    conda:
+        "envs/assembly.yaml"
+    shell:
+        """
+bwa index -p {params.prefix} -a is {input.fasta}
+
+sleep 100
+
+bwa mem -o {output} -t {threads} {params.prefix} {input.fwd} {input.rev}
+
+        """
+
+rule sam2bam_pilon:
+    input:
+        "results/genome_assembly/mapped_reads_pilon1/Genome_read_ali.sam"
+    output:
+        bam="results/genome_assembly/mapped_reads_pilon1/Genome_read_ali.bam",
+        sort="results/genome_assembly/mapped_reads_pilon1/Genome_read_ali.sort.bam"
+    conda:
+        "envs/assembly.yaml"
+    shell:
+        """
+samtools view -Sb {input} > {output.bam}
+samtools sort {output.bam} > {output.sort}
+samtools index {output.sort}
+
+        """
+### mapping shortreads & pilon polishing using saca8_scaff1.fasta from step before
+#spec = "saca8_scaff1"
+
+rule run_pilon_2:
+    input:
+        fasta="results/genome_assembly/pilon_1/saca8_scaff1_p1.fasta",
+        bam="results/genome_assembly/mapped_reads_pilon1/Genome_read_ali.sort.bam"
+    output:
+        "results/genome_assembly/pilon_2/saca8_scaff1_p2.fasta"
+    params:
+        prefix="results/genome_assembly/pilon_2"
+    threads:
+        20
+    conda:
+        "envs/assembly.yaml"
+    shell:
+        """
+
+export _JAVA_OPTIONS='-Xmx500g'
+mkdir -p {params.prefix}
+
+pilon --genome {input.fasta} --fix snps,indels,gaps --changes \
+    --frags {input.bam} \
+    --output {output}
+
+        """
+

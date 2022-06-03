@@ -1,0 +1,622 @@
+#####################################
+# workflow for the Sacculina Genome #
+#####################################
+# report: "report/workflow.rst"
+
+configfile: "workflow/config/config.yaml"
+
+import pandas as pd 
+from os import listdir
+from os.path import isfile, join
+
+samples = pd.read_table(config["sample_info"] , dtype=str).set_index(["Sample"], drop=False)
+samples_cirri = pd.read_table(config["sample_info_cirri"] , dtype=str).set_index(["Sample"], drop=False)
+externals = pd.read_table(config["sample_external"] , dtype=str).set_index(["species"], drop=False)
+
+CIRRI_SPEC=['Tetraclita_japonica_formosana', 'Amphibalanus_amphitrite', 'Pollicipes_pollicipes']
+
+# Evtl auch noch Megabalanus_volcano
+
+
+def get_sample_forward_cirri(sample_id):         
+    dct = {}
+    for i, j in zip(samples_cirri['Sample'],samples_cirri['Forward']):
+        dct.setdefault(i, []).append( j)
+    forward = dct[sample_id]
+    return forward 
+
+def get_sample_reverse_cirri(sample_id):
+    dct = {}
+    for i, j in zip(samples_cirri['Sample'],samples_cirri['Reverse']):
+        dct.setdefault(i, []).append( j)
+    reverse = dct[sample_id]
+    return reverse
+
+def get_taxon_cirri(sample_id):
+    area_dict = dict(zip(samples_cirri['Sample'],samples_cirri['Taxon']))
+    taxon = area_dict[sample_id]
+    return taxon
+
+def get_tsa_file(wildcards):
+    area_dict = dict(zip(externals['species'],externals['file'])) 
+    file = area_dict[wildcards.species] 
+    return file
+
+def get_all_tsa_files():
+    mylist = []
+    for file in  externals['file'].tolist():
+        mylist.append(file)
+    return set(mylist)
+
+def tsa_taxa_list():
+    mylist=[]
+    for dataset in externals['species'].tolist():
+        mylist.append("{dataset}".format(dataset=dataset))
+    return set(mylist)
+
+
+def get_sample_forward(sample_id):     
+    area_dict = dict(zip(samples['Sample'],samples['Forward']))
+    forward = area_dict[sample_id]     
+    return forward
+
+def get_sample_reverse(sample_id):
+    area_dict = dict(zip(samples['Sample'],samples['Reverse']))
+    reverse = area_dict[sample_id]
+    return reverse
+
+def print_all_forward():
+    mylist=[]
+    for dataset in samples['Sample'].tolist():
+        mylist.append("results/differential_expression/trim/{sample}_1.fq.gz".format(sample=dataset))
+    return sorted(set(mylist))
+
+def print_all_reverse():
+    mylist=[]
+    for dataset in samples['Sample'].tolist():
+        mylist.append("results/differential_expression/trim/{sample}_2.fq.gz".format(sample=dataset))     
+    return sorted(set(mylist))
+
+
+def input_for_final(*wildcards):
+    return expand(rules.map_protein_exonerate.rule._output, sample_num=[ "{:04d}".format(i) for i in range(1000) ], allow_missing=True)
+
+
+rule all:
+    input:
+        "results/differential_expression/DE_noRibo/DE_analysis.ok",
+        "results/differential_expression/abundance.ok"
+    shell:
+         """
+	 echo "final step"	
+         """
+
+### also add genome assembly ###
+
+
+##############################
+### Transcriptome assembly ###
+##############################
+
+
+rule rename_reads:
+    output:
+        R1=temp("results/differential_expression/raw/{sample}_1.fq.gz"),
+        R2=temp("results/differential_expression/raw/{sample}_2.fq.gz")
+    params:
+        fwd=lambda wildcards: get_sample_forward('{sample_id}'.format(sample_id=wildcards.sample) ),
+        rev=lambda wildcards: get_sample_reverse('{sample_id}'.format(sample_id=wildcards.sample) )
+    shell:
+        """
+cat resources/RNA-Seq/{params.fwd} > {output.R1}
+cat resources/RNA-Seq/{params.rev} > {output.R2}
+
+        """
+
+
+rule Trim_raw2:
+    input:
+        R1="results/differential_expression/raw/{sample}_1.fq.gz",
+        R2="results/differential_expression/raw/{sample}_2.fq.gz"
+    output: 
+        R1="results/differential_expression/trim/{sample}_1.fq.gz",
+        R2="results/differential_expression/trim/{sample}_2.fq.gz"
+    log: 
+        "results/logs/differential_expression/{sample}_fastp.log"
+    threads:
+        8
+    shell: 
+        """
+(fastp -i {input.R1} -I {input.R2} -o {output.R1} -O {output.R2} --length_required 100 --thread {threads} --low_complexity_filter --detect_adapter_for_pe --trim_poly_x \
+ --json results/logs/fastp/{wildcards.sample}.fastp.json \
+ --html results/logs/fastp/{wildcards.sample}.fastp.html ) &> {log}
+        """
+ 
+
+rule map_all_trimmed_hisat2:
+    input:
+        R1=print_all_forward(),
+        R2=print_all_reverse(),
+        Genome="results/funannotate/genome.clean.sorted.fa" ##config["genome"]
+    output:
+        "results/differential_expression/mapped/all_mapped.hisat2.sam"
+    threads:
+        workflow.cores
+    log:
+        "results/logs/differential_expression/mapping.log"
+    params:
+        tmp_files="results/differential_expression/mapped/tmp_ald.sorted",
+        idx="results/differential_expression/mapped/genome_hisat2"
+    run:
+        fwd_list=','.join(input.R1)
+        rev_list=','.join(input.R2)
+	shell(" (hisat2-build -p {threads} {input.Genome} {params.idx} ; "\
+        "hisat2 -S {output} --no-softclip --threads {threads} --dta -x {params.idx} --max-intronlen 300000 --pen-noncansplice 1000000 -1 {fwd_list} -2 {rev_list} ) &> {log} ")
+   
+
+rule sort_sam:
+    input:
+        "results/differential_expression/mapped/all_mapped.hisat2.sam"
+    output:
+        bam="results/differential_expression/mapped/all_mapped.hisat2.bam",
+        sort="results/differential_expression/mapped/all_mapped.hisat2.sorted.bam"
+    threads:
+        workflow.cores
+    log:
+        "results/logs/differential_expression/sort.hisat2_result.log"
+    params:
+        tmp_files="results/differential_expression/mapped/tmp_ald.sorted"
+    shell:
+        """
+(samtools view -@ {threads} -Sb {input} > {output.bam}
+samtools sort -@ {threads} {output.bam} > {output.sort} ) &> {log}
+
+        """
+
+# ggf sort noch mit tmp file...
+# samtools sort -T {params.tmp_files} -o {output} -@ {threads}  &> {log} 
+
+
+
+rule extract_mapped_reads:
+    input:
+        "results/differential_expression/mapped/all_mapped.hisat2.sorted.bam"
+    output:
+        R1="results/differential_expression/mapped/all_mapped_R1.fastq",
+        R2="results/differential_expression/mapped/all_mapped_R2.fastq"
+    log:
+        "results/logs/differential_expression/bam2fastq.log"
+    shell:
+        """
+bedtools bamtofastq -i {input} -fq {output.R1} -fq2 {output.R2} &> {log}
+"""
+
+
+rule trinity_assembly_denovo:
+    input:
+        R1="results/differential_expression/mapped/all_mapped_R1.fastq",
+        R2="results/differential_expression/mapped/all_mapped_R2.fastq"
+    output:
+        "results/differential_expression/trinity-denovo/Trinity.fasta"
+    params:
+        outdir="results/differential_expression/trinity-denovo",
+        max_ram="350G", 
+    threads: 48
+    log:
+        "results/logs/differential_expression/trinity-denovo.log"
+    shell:
+        """
+ Trinity --seqType fq --left {input.R1} --right {input.R2} --SS_lib_type FR --NO_SEQTK --CPU {threads} --max_memory {params.max_ram} --output {params.outdir}  &> {log}
+"""
+
+
+rule transdecoder:
+    input:
+        "results/differential_expression/trinity-denovo/Trinity.fasta"
+    output:
+        "results/differential_expression/transdecoder/longest_orfs.pep"
+    params:
+        out_dir="results/differential_expression/transdecoder/",
+        min_prot_length=100
+    threads: 1
+    log:
+        "results/logs/differential_expression/transdecoder.log"
+    shell:
+        """
+TransDecoder.LongOrfs -t {input} -m {params.min_prot_length} --G universal --output_dir {params.out_dir} &> {log}
+        """
+
+rule trinotate_blastx:
+    input:
+        "results/differential_expression/trinity-denovo/Trinity.fasta"
+    output:
+        "results/differential_expression/trinotate/blastx.outfmt6"
+    params:
+        DB="resources/Trinotate/uniprot_sprot.pep"
+    threads: workflow.cores*0.35
+    log:
+        "results/logs/differential_expression/trinotate_blastx.log"
+    shell:
+        """
+blastx -query {input} -db {params.DB} -num_threads {threads} -max_target_seqs 1 -outfmt 6 -evalue 1e-3 > {output}
+        """
+
+rule trinotate_blastp:
+    input:
+        "results/differential_expression/transdecoder/longest_orfs.pep"
+    output:
+        "results/differential_expression/trinotate/blastp.outfmt6"
+    params:
+        DB="resources/Trinotate/uniprot_sprot.pep"
+    threads: workflow.cores*0.25
+    log:
+        "results/logs/differential_expression/trinotate_blastp.log"
+    shell:
+        """
+blastp -query {input} -db {params.DB} -num_threads {threads} -max_target_seqs 1 -outfmt 6 -evalue 1e-3 > {output}
+        """
+
+
+rule trinotate_hmmscan:
+    input:
+        "results/differential_expression/transdecoder/longest_orfs.pep"
+    output:
+        "results/differential_expression/trinotate/pfam.out"
+    params:
+        DB="resources/Trinotate/Pfam-A.hmm"
+    threads: workflow.cores*0.4
+    log:
+        "results/logs/differential_expression/trinotate_blastp.log"
+    shell: 
+        """
+hmmscan --cpu {threads} --domtblout {output} {params.DB} {input} &> {log}
+        """
+
+
+rule trinotate_signalp:
+    input:
+        "results/differential_expression/transdecoder/longest_orfs.pep"
+    output:
+        final="results/differential_expression/trinotate/signalp.out",
+        pep=temp("results/differential_expression/trinotate/longest_orfs.pep"),
+        dir=temp(directory("results/differential_expression/trinotate/signalp"))
+    threads: workflow.cores*0.25
+    params:
+        work_dir="results/differential_expression/trinotate"
+    envmodules:
+        "signalp/4.1",
+        "/home/smartin/module_ERTE"
+    shell: 
+        """
+cp {input} {output.pep}
+# SPLIT=$(echo $(grep -c '>' {output.pep}) / 20000 | bc -l | awk '{{print ($0-int($0)>0)?int($0)+1:int($0)}}') #generate number of splits so that max number of sequences is 20000 per file...
+pyfasta split -n {threads} {output.pep}
+
+for i in $(seq 0 $( expr {threads} - 1 )) ;do  
+
+    signalp -f short -v -T {output.dir} -n {output.dir}/signalp_tmp$i.out {output.pep}.$i &
+
+done
+wait
+cat {output.dir}/signalp_tmp* > {output.final}
+rm {output.pep}.*
+        """
+
+rule trinotate_load:
+    input:
+        trans="results/differential_expression/trinity-denovo/Trinity.fasta",
+        pep="results/differential_expression/transdecoder/longest_orfs.pep",
+        blastp="results/differential_expression/trinotate/blastp.outfmt6",
+        blastx="results/differential_expression/trinotate/blastx.outfmt6",
+        hmmscan="results/differential_expression/trinotate/pfam.out",
+        signalp="results/differential_expression/trinotate/signalp.out"
+    output:
+        map="results/differential_expression/trinotate/transcriptome.gene_trans_map",
+        db="results/differential_expression/trinotate/Trinotate.sqlite",
+    params:
+        work_dir="results/differential_expression/trinotate",
+        sqlite="resources/Trinotate/Trinotate.sqlite"
+    threads: 1
+    shell:
+        """
+$TRINITY_HOME/util/support_scripts/get_Trinity_gene_to_trans_map.pl {input.trans} >  {output.map}
+cp {params.sqlite} {output.db}
+cd {params.work_dir}
+
+Trinotate $(basename {output.db}) init --gene_trans_map $(basename {output.map}) --transcript_fasta ../../{input.trans} --transdecoder_pep ../../{input.pep}
+Trinotate $(basename {output.db}) LOAD_swissprot_blastp $(basename {input.blastp})
+Trinotate $(basename {output.db}) LOAD_swissprot_blastx $(basename {input.blastx})
+Trinotate $(basename {output.db}) LOAD_pfam $(basename {input.hmmscan})
+Trinotate $(basename {output.db}) LOAD_signalp $(basename {input.signalp})
+        """
+
+##Load transmembrane domains missing
+#Trinotate Trinotate.sqlite LOAD_tmhmm tmhmm.out
+
+rule trinotate_report:
+    input:
+        db="results/differential_expression/trinotate/Trinotate.sqlite"
+    output:
+        report="results/differential_expression/trinotate/annotation.trinotate-report.xls"
+    threads: 1
+    shell:
+        """
+Trinotate {input.db} report > {output.report}
+        """
+
+
+### fasta seq length should be run seperately of within the assembly step.... trinity_assembly_guided
+
+rule run_GOset:
+    input:
+        trinotate_report="results/differential_expression/trinotate/annotation.trinotate-report.xls",
+        trans="results/differential_expression/trinity-denovo/Trinity.fasta",
+        map="results/differential_expression/trinotate/transcriptome.gene_trans_map",
+        iso_matrix="results/differential_expression/abundance/RSEM.isoform.TMM.EXPR.matrix"
+    output:
+        go_annot="results/differential_expression/trinotate/go_annotations.txt",
+        seq_len="results/differential_expression/trinity-denovo/sequence_length.txt",
+        gene_len="results/differential_expression/trinity-denovo/gene_length.txt"
+    threads: 1
+    shell: 
+        """
+extract_GO_assignments_from_Trinotate_xls.pl --Trinotate_xls {input.trinotate_report} -G --include_ancestral_terms > {output.go_annot}
+
+$TRINITY_HOME/util/misc/fasta_seq_length.pl  {input.trans} > {output.seq_len} 
+$TRINITY_HOME/util/misc/TPM_weighted_gene_length.py --gene_trans_map {input.map} --trans_lengths {output.seq_len} --TPM_matrix {input.iso_matrix} > {output.gene_len}
+        """
+
+# not runnint this since we dont have a factor_labeling.txt ....
+# ${TRINITY_HOME}/Analysis/DifferentialExpression/run_GOseq.pl --factor_labeling  factor_labeling.txt --GO_assignments go_annotations.txt --lengths gene.lengths.txt
+
+
+rule add_functional_annotation_to_exprMatrix:
+    input:
+        report="results/differential_expression/trinotate/annotation.trinotate-report.xls",
+        iso_matrix="results/differential_expression/abundance/RSEM.isoform.TMM.EXPR.matrix"
+    output:   
+        mapping="results/differential_expression/trinotate/annotation.trinotate-report.xls.name_mappings",
+        annot="results/differential_expression/abundance/RSEM.isoforms.TMM.EXPR.annotated.matrix"
+    threads: 1
+    shell: 
+        """
+Trinotate_get_feature_name_encoding_attributes.pl {input.report} > {output.mapping}
+$TRINITY_HOME/Analysis/DifferentialExpression/rename_matrix_feature_identifiers.pl {input.iso_matrix} {output.mapping}  > {output.annot}
+        """
+
+
+rule abundance:
+    input:
+        assembly="results/differential_expression/trinity-denovo/Trinity.fasta",
+        sample_file=config["DE_samplefile"],
+        R1=print_all_forward(),
+        R2=print_all_reverse(),
+    output:
+        touch("results/differential_expression/abundance.ok")
+    threads: workflow.cores
+    params:
+        working_dir="results/differential_expression/abundance"
+    log:
+        "results/logs/differential_expression/abundance.log"
+    shell:
+        """
+( if [ ! -d {params.working_dir} ]; then mkdir -p {params.working_dir} ; fi
+cp {input.assembly} {params.working_dir}/assembly.fas
+cp {input.sample_file} {params.working_dir}/samplefile.txt
+for file in {input.R1} {input.R2} ; do cp $file {params.working_dir}/ ; done
+cd {params.working_dir}
+
+# run the script
+$TRINITY_HOME/util/align_and_estimate_abundance.pl --transcripts assembly.fas --seqType fq \
+--samples_file samplefile.txt --est_method RSEM --aln_method bowtie2 --trinity_mode \
+--prep_reference  --thread_count {threads} --coordsort_bam ) &>{log}
+        """
+
+rule build_expression_matrix:
+    input:
+        "results/differential_expression/abundance.ok"
+    output:
+        touch("results/DE_matrix.ok"),
+        gene_matrix="results/differential_expression/abundance/RSEM.gene.TMM.EXPR.matrix",
+        iso_matrix="results/differential_expression/abundance/RSEM.isoform.TMM.EXPR.matrix"
+    threads: 1
+    log:
+        "results/logs/differential_expression/build_Xpression_Matrix.log"
+    params:
+        working_dir="results/differential_expression/abundance",
+    shell:
+        """
+(cd {params.working_dir}
+
+ $TRINITY_HOME/util/abundance_estimates_to_matrix.pl --est_method RSEM \
+--gene_trans_map assembly.fas.gene_trans_map \
+--name_sample_by_basedir $(cut -f2 samplefile.txt | sed 's|$|/RSEM.isoforms.results|') ) &>{log}
+        """
+
+rule de_edger:
+    input:
+        check="results/DE_matrix.ok",
+        gene_matrix="results/differential_expression/abundance/RSEM.gene.TMM.EXPR.matrix",
+        go_annot="results/differential_expression/trinotate/go_annotations.txt",
+        gene_len="results/differential_expression/trinity-denovo/gene_length.txt"
+    output:
+        touch("results/DE_analysis.ok"),
+	    dir=directory("results/differential_expression/differential_Xpression"),
+    params:
+        plot="GOplot.externa_vs_interna.pdf",
+        samples=config["DE_int-ext"],
+        samples_biorep="results/differential_expression/differental_Xpression/samples_info.txt",
+        dispersion=config["DE_dispersion"],
+        tmpdir="tmpdir_externa_vs_interna"
+    log:
+        "results/logs/differential_expression/differential_Xpression.log"
+    shell:
+        """
+( echo -e "running DE analysis: \n"; 
+$TRINITY_HOME/Analysis/DifferentialExpression/run_DE_analysis.pl --matrix {input.gene_matrix} --method edgeR --samples_file {params.samples} --output {output.dir} --dispersion {params.dispersion}
+cd {output.dir}
+echo -e "analyze differential expression : ... \n"
+$TRINITY_HOME/Analysis/DifferentialExpression/analyze_diff_expr.pl --matrix RSEM.gene.TMM.EXPR.matrix.*.count_matrix -P 1e-10 -C 2 --examine_GO_enrichment --GO_annots ../../{input.go_annot} --gene_lengths ../../{input.gene_len}  
+
+cat *UP.subset.GOseq.enriched | sort | uniq > all-UP.enrich 
+
+$TRINITY_HOME/Analysis/DifferentialExpression/prep_n_run_GOplot.pl --GO_annots ../../{input.go_annot} --DE_subset RSEM.gene.TMM.EXPR.matrix.externa_vs_interna.edgeR.DE_results.P1e-10_C2.DE.subset --DE_GO_enriched all-UP.enrich \
+--tmpdir {params.tmpdir} --pdf_filename {params.plot}
+) &> {log}
+        """
+
+#R-Plots need to be a little bit fine tuned. This can be done with an additional script.
+
+#############################################
+### repeat analysis but exclude Ribosomes ###
+#############################################
+
+rule remove_ribo:
+    input:
+        go_annot="results/differential_expression/trinotate/go_annotations.txt",
+        assembly="results/differential_expression/trinity-denovo/Trinity.fasta",
+        map="results/differential_expression/trinotate/transcriptome.gene_trans_map",
+        gene_len="results/differential_expression/trinity-denovo/gene_length.txt"
+    output:
+        Ribo_GO="results/differential_expression/DE_noRibo/Ribosomal_GO_Terms.list",
+        seq_list_Ribo="results/differential_expression/DE_noRibo/Sequnces_with_Ribo.list",
+        seq_withRibo="results/differential_expression/DE_noRibo/Trans_with_Ribo.list",
+        seq_list_noRi="results/differential_expression/DE_noRibo/Sequnces_no_Ribo.list",
+        map_noRi="results/differential_expression/DE_noRibo/transcriptome_noRi.gene_trans_map",
+        assembly="results/differential_expression/DE_noRibo/transcriptome_noRi.fasta",
+        gene_len="results/differential_expression/DE_noRibo/gene_length.txt"
+    shell:
+        """
+grep -B1 -P '^name:.*ribosom.*' resources/funannotate_db/go.obo  | grep '^id' | cut -f2,3 -d':' | sed 's/^ //' > {output.Ribo_GO}
+
+grep -f {output.Ribo_GO} {input.go_annot} | cut -f1 > {output.seq_list_Ribo}
+grep -v -f {output.Ribo_GO} {input.go_annot} | cut -f1 > {output.seq_list_noRi}
+
+grep -f {output.seq_list_Ribo} {input.map} | cut -f2 > {output.seq_withRibo} 
+grep -v -f {output.seq_list_Ribo} {input.map}  > {output.map_noRi}
+
+seqkit grep -v -f {output.seq_withRibo} {input.assembly} > {output.assembly}
+grep -v -f {output.seq_list_Ribo} {input.gene_len} > {output.gene_len}
+
+        """
+
+rule abundance_noRi:
+    input:
+        assembly="results/differential_expression/DE_noRibo/transcriptome_noRi.fasta",
+        sample_file=config["DE_samplefile"],
+        R1=print_all_forward(),
+        R2=print_all_reverse(),
+    output:
+        touch("results/differential_expression/DE_noRibo/abundance_noRi.ok")
+    threads: workflow.cores
+    params:
+        working_dir="results/differential_expression/DE_noRibo/abundance"
+    log:
+        "results/logs/differential_expression/abundance_noRi.log"
+    shell:
+        """
+( if [ ! -d {params.working_dir} ]; then mkdir -p {params.working_dir} ; fi
+cp {input.assembly} {params.working_dir}/assembly.fas
+cp {input.sample_file} {params.working_dir}/samplefile.txt
+for file in {input.R1} {input.R2} ; do cp $file {params.working_dir}/ ; done
+cd {params.working_dir}
+
+# run the script
+$TRINITY_HOME/util/align_and_estimate_abundance.pl --transcripts assembly.fas --seqType fq \
+--samples_file samplefile.txt --est_method RSEM --aln_method bowtie2 --trinity_mode \
+--prep_reference  --thread_count {threads} --coordsort_bam ) &>{log}
+        """
+
+rule build_expression_matrix_noRi:
+    input:
+        "results/differential_expression/DE_noRibo/abundance_noRi.ok"
+    output:
+        touch("results/differential_expression/DE_noRibo/DE_matrix.ok"),
+        gene_matrix="results/differential_expression/DE_noRibo/abundance/RSEM.gene.TMM.EXPR.matrix",
+        iso_matrix="results/differential_expression/DE_noRibo/abundance/RSEM.isoform.TMM.EXPR.matrix"
+    threads: 1
+    log:
+        "results/logs/differential_expression/DE_noRibo/build_Xpression_Matrix.log"
+    params:
+        working_dir="results/differential_expression/DE_noRibo/abundance",
+    shell:
+        """
+(cd {params.working_dir}
+
+ $TRINITY_HOME/util/abundance_estimates_to_matrix.pl --est_method RSEM \
+--gene_trans_map assembly.fas.gene_trans_map \
+--name_sample_by_basedir $(cut -f2 samplefile.txt | sed 's|$|/RSEM.isoforms.results|') ) &>{log}
+        """
+
+rule de_edger_noRi:
+    input:
+        check="results/differential_expression/DE_noRibo/DE_matrix.ok",
+        gene_matrix="results/differential_expression/DE_noRibo/abundance/RSEM.gene.TMM.EXPR.matrix",
+        go_annot="results/differential_expression/trinotate/go_annotations.txt",
+        gene_len="results/differential_expression/DE_noRibo/gene_length.txt"
+    output:
+        touch("results/differential_expression/DE_noRibo/DE_analysis.ok"),
+	    dir=directory("results/differential_expression/DE_noRibo/differential_Xpression"),
+    params:
+        plot="GOplot.externa_vs_interna.pdf",
+        samples=config["DE_int-ext"],
+        samples_biorep="results/differential_expression/DE_noRibo/differential_Xpression/samples_info.txt",
+        dispersion=config["DE_dispersion"],
+        tmpdir="tmpdir_externa_vs_interna"
+    log:
+        "results/logs/differential_expression/DE_noRibo/differential_Xpression.log"
+    shell:
+        """
+( echo -e "running DE analysis: \n"; 
+$TRINITY_HOME/Analysis/DifferentialExpression/run_DE_analysis.pl --matrix {input.gene_matrix} --method edgeR --samples_file {params.samples} --output {output.dir} --dispersion {params.dispersion}
+cd {output.dir}
+echo -e "analyze differential expression : ... \n"
+$TRINITY_HOME/Analysis/DifferentialExpression/analyze_diff_expr.pl \
+    --matrix RSEM.gene.TMM.EXPR.matrix.*.count_matrix \
+        -P 1e-10 \
+        -C 2 \
+        --examine_GO_enrichment \
+        --GO_annots ../../../{input.go_annot} \
+        --gene_lengths ../../../{input.gene_len} \
+        --heatmap_colorscheme "lightgreen,blue" \
+        --top_variable_genes 100 \
+        --var_gene_method coeffvar \
+        --img_height 10
+
+ cat *UP.subset.GOseq.enriched | sort | uniq > all-UP.enrich 
+
+$TRINITY_HOME/Analysis/DifferentialExpression/prep_n_run_GOplot.pl \
+    --GO_annots ../../../{input.go_annot} \
+    --DE_subset RSEM.gene.TMM.EXPR.matrix.externa_vs_interna.edgeR.DE_results.P1e-10_C2.DE.subset \
+    --DE_GO_enriched all-UP.enrich \
+    --tmpdir {params.tmpdir} \
+    --pdf_filename {params.plot}
+
+) &> {log}
+        """
+
+### added 100 max limit for pairwise comparison...
+##    --max_DE_genes_per_comparison 100  # this will only consider the first 100 ....
+### alternative option could be --max_genes_clust 100 # this will skip heatmap
+### --top_genes 150 # looks promising but only shows every second Transcript name.... 
+###  $TRINITY_HOME/Analysis/DifferentialExpression/analyze_diff_expr.pl --matrix RSEM.gene.TMM.EXPR.matrix.*.count_matrix -P 1e-10 -C 2 --examine_GO_enrichment --GO_annots ../trinotate/go_annotations.txt --gene_lengths gene_length.txt --heatmap_colorscheme "lightgreen,blue" --top_variable_genes 100 --var_gene_method coeffvar --img_height 10
+
+# build bubble plot:
+# Rscript workflow/scripts/create_GO_Bubble_graph.R DE_noRibo_onlyOne/differential_Xpression/tmpdir_externa_vs_interna/EC.david DE_noRibo_onlyOne/differential_Xpression/tmpdir_externa_vs_interna/EC.genelist test_GOBubble
+
+rule get_trinity_prot_pairs:
+    input:
+        assembly="results/differential_expression/DE_noRibo/transcriptome_noRi.fasta",
+        prot="results/funannotate2/predict_results/Sacculina_carcini.proteins.fa"
+    output:
+        "results/differential_expression/DE_noRibo/top_hits.txt"
+    threads: 20
+    shell:
+        """
+makeblastdb -in {input.prot} -dbtype prot -title protein_DB -out results/DE_noRibo/protein_DB 
+
+blastx -query {input.assembly} -db results/DE_noRibo/protein_DB -max_target_seqs 1 -num_threads {threads} -outfmt 7 -out results/DE_noRibo/blast_output.txt
+
+cat results/DE_noRibo/blast_output.txt |awk '/hits found/{{getline;print}}' | grep -v "#" > {output}
+        """
+

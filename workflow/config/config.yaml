@@ -1,0 +1,54 @@
+#####################################
+# configuration file                #
+# Genome analysis Sacculina carcini #
+#####################################
+
+
+# genome sequence
+
+genome: 
+    "saca8_scp1p2_v0.2.fasta.masked"
+
+# information about the samples for read processing
+
+sample_info: 
+    "workflow/config/Sacculina_samplefile.txt"
+
+# file for differential expression analysis with trinity
+
+DE_samplefile: 
+    "workflow/config/Sacculina_samplefile_DE.txt"
+
+# https://github.com/trinityrnaseq/trinityrnaseq/wiki/Trinity-Differential-Expression
+# dispersion should be carefully selected. Start with a value between 0.1 and 0.4
+# we need to specify this value if we do not have replicates
+
+DE_dispersion:
+    "0.1"
+
+DE_int-ext:
+    "workflow/config/Sacculina_samplefile_int-ext.txt"
+
+masking:
+    container: "/share/scientific_bin/singularity/containers/dfam-tetools.sif"
+
+funannotate:
+    spec: "Sacculina carcini"
+    intron: "300000"
+    DB: "resources/funannotate_db/"
+    container: "/share/scientific_bin/singularity/containers/funannotate_with_genemark.sif"
+    busco_db: "arthropoda"
+
+
+# the above container is missing genemark
+# /share/scientific_bin/singularity/containers/fun_box3.sif
+# "resources/funannotate_db-1.8.9/"
+
+# external species : Cirripedia
+# Reads from NBCI
+sample_info_cirri:
+    "workflow/config/Cirripedia_samplefile.txt"
+
+# TSA from NCBI
+sample_external:
+    "external_sequences_final.list"

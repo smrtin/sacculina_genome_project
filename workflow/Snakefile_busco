@@ -1,0 +1,150 @@
+#####################################
+# workflow for the Sacculina Genome #
+#####################################
+# report: "report/workflow.rst"
+
+localrules: funannotate_setup
+configfile: "workflow/config/config.yaml"
+
+import pandas as pd 
+from os import listdir
+from os.path import isfile, join
+
+
+ORTHOFINDER_SPECIES=['Amphibalanus_amphitrite', 'Apis_mellifera','Daphnia_pulex','Darwinula_stevensoni',
+'Eurytemora_affinis', 'Homarus_americanus', 'Ischnura_elegans', 'Lepeophtheirus_salmonis',
+'Notodromas_monacha' ,'Penaeus_japonicus', 'Pollicipes_pollicipes', 'Portunus_trituberculatus',
+'Procambarus_clarkii' ,'Schistocerca_americana', 'Tigriopus_californicus', 'Tribolium_castaneum',
+'Trinorchestia_longiramus']
+
+
+rule all:
+    input:
+        expand("results/busco/busco_{species}/short_summary.specific.arthropoda_odb10.busco_{species}.txt",species=ORTHOFINDER_SPECIES),
+        "results/busco/busco_summary/busco_figure.png"
+    shell:
+         """
+	 echo "final step"	
+         """
+
+
+
+# gene prediction from Sacculina : "results/funannotate2/predict_results/Sacculina_carcini.proteins.fa"
+# input folder for orthofinder : "resources/orthofinder/"
+
+
+########################
+## RUN BUSCO ANALYSIS ##
+########################
+
+
+
+rule busco_genome:
+    input:
+        Genome="results/funannotate/genome.clean.sorted.fa"
+    output:
+        "results/busco_analysis/busco_genome/short_summary.specific.arthropoda_odb10.busco_genome.txt"
+    params:
+        dir="busco_genome",
+        lineage="arthropoda_odb10",
+        mode="genome",
+        config="resources/busco_config.ini"
+    threads: 20
+    log:
+        "results/logs/busco_analysis/busco_genome.log"
+    shell:
+        """
+busco -f -m {params.mode} -i {input} -o {params.dir} -l {params.lineage} --cpu {threads} --config {params.config} &> {log}
+        """
+
+
+#rule busco_trans:
+#    input:
+#        "results/trinity-assembly/Trinity-GG.fasta"
+#    output:
+#        "results/busco_analysis/busco_trinity/short_summary.specific.arthropoda_odb10.busco_trinity.txt"
+#    params:
+#        dir="busco_trinity",
+#        lineage="arthropoda_odb10",
+#        mode="transcriptome",
+#        config="resources/busco_config.ini"
+#    threads: 20
+#    log:
+#       "results/logs/busco_analysis/busco_trinity.log"
+#    shell:
+#        """
+#busco -f -m {params.mode} -i {input} -o {params.dir} -l {params.lineage} --cpu {threads} --config {params.config} &> {log}
+#        """
+
+rule busco_fun_prot2:
+    input:
+        "results/funannotate2/predict_results/Sacculina_carcini.proteins.fa"
+    output:
+        "results/busco_analysis/busco_fun_prot2/short_summary.specific.arthropoda_odb10.busco_fun_prot2.txt"
+    params:
+        dir="busco_fun_prot2",
+        lineage="arthropoda_odb10",
+        mode="protein",
+        config="resources/busco_config.ini"
+    threads: workflow.cores
+    log:
+        "results/logs/busco_analysis/busco_fun_prot2.log"
+    shell:
+        """
+( busco -f -m {params.mode} -i {input} -o {params.dir} -l {params.lineage} --cpu {threads} --config {params.config} ) &> {log}
+        """
+
+
+
+rule busco_summary:
+    input:
+        "results/busco_analysis/busco_genome/short_summary.specific.arthropoda_odb10.busco_genome.txt",
+        "results/busco_analysis/busco_fun_prot/short_summary.specific.arthropoda_odb10.busco_fun_prot.txt",
+        #"results/busco_analysis/busco_trinity/short_summary.specific.arthropoda_odb10.busco_trinity.txt",
+    output:
+        "results/busco_analysis/busco_summary/busco_figure.png"
+    params:
+        dir="results/busco_analysis/busco_summary"
+    threads: 1
+    shell:
+        """
+for file in {input}; do cp $file {params.dir}/ ; done
+generate_plot.py -wd {params.dir}
+        """
+
+
+rule busco_orthofinder_input:
+    input: 
+        "resources/orthofinder/{species}.fas"
+    output: 
+        "results/busco/busco_{species}/short_summary.specific.arthropoda_odb10.busco_{species}.txt" 
+    params:
+        dir="busco_{species}",
+        path="./results/busco/",
+        lineage="arthropoda_odb10",
+        mode="protein",
+        config="resources/busco_config.ini"
+    threads: 20
+    log:
+        "results/logs/busco/busco_{species}.log"
+    shell:
+        """
+busco -f -m {params.mode} -i {input} --out_path {params.path} -o {params.dir} -l {params.lineage} --cpu {threads} --config {params.config} &> {log}
+        """
+
+
+
+rule busco_summary_ortho:
+    input:
+        expand("results/busco/busco_{species}/short_summary.specific.arthropoda_odb10.busco_{species}.txt",species=ORTHOFINDER_SPECIES),
+        "results/busco_analysis/busco_fun_prot2/short_summary.specific.arthropoda_odb10.busco_fun_prot2.txt"
+    output:
+        "results/busco/busco_summary/busco_figure.png"
+    params:
+        dir="results/busco/busco_summary"
+    threads: 1
+    shell:
+        """
+for file in {input}; do cp $file {params.dir}/ ; done
+generate_plot.py -wd {params.dir}
+        """

@@ -1,0 +1,3 @@
+SAC-M	SAC-M_rep1	SAC-M_1.fq.gz	SAC-M_2.fq.gz
+SAC-N	SAC-N_rep1	SAC-N_1.fq.gz	SAC-N_2.fq.gz
+SAC-S	SAC-S_rep1	SAC-S_1.fq.gz	SAC-S_2.fq.gz

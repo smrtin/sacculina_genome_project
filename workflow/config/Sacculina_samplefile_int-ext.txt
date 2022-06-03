@@ -1,0 +1,3 @@
+interna	SAC-M_rep1
+interna	SAC-N_rep1
+externa	SAC-S_rep1
