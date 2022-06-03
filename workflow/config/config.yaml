@@ -7,7 +7,7 @@
 # genome sequence
 
 genome: 
-    "saca8_scp1p2_v0.2.fasta.masked"
+    "resources/saca8_scp1p2_v0.2.fasta.masked"
 
 # information about the samples for read processing
 
@@ -51,4 +51,4 @@ sample_info_cirri:
 
 # TSA from NCBI
 sample_external:
-    "external_sequences_final.list"
+    "workflow/config/external_sequences_final.list"

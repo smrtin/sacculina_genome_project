@@ -16,8 +16,6 @@ externals = pd.read_table(config["sample_external"] , dtype=str).set_index(["spe
 
 CIRRI_SPEC=['Tetraclita_japonica_formosana', 'Amphibalanus_amphitrite', 'Pollicipes_pollicipes']
 
-# Evtl auch noch Megabalanus_volcano
-
 
 def get_sample_forward_cirri(sample_id):         
     dct = {}
@@ -49,13 +47,6 @@ def get_all_tsa_files():
         mylist.append(file)
     return set(mylist)
 
-def tsa_taxa_list():
-    mylist=[]
-    for dataset in externals['species'].tolist():
-        mylist.append("{dataset}".format(dataset=dataset))
-    return set(mylist)
-
-
 def get_sample_forward(sample_id):     
     area_dict = dict(zip(samples['Sample'],samples['Forward']))
     forward = area_dict[sample_id]     
@@ -79,10 +70,6 @@ def print_all_reverse():
     return sorted(set(mylist))
 
 
-def input_for_final(*wildcards):
-    return expand(rules.map_protein_exonerate.rule._output, sample_num=[ "{:04d}".format(i) for i in range(1000) ], allow_missing=True)
-
-
 rule all:
     input:
         "results/annotation/repeats/MyDatabase-families.fa",
@@ -94,7 +81,7 @@ rule all:
 
 rule repeat_modeler:
     input:
-        genome="resources/genome/saca8_scp1p2_v0.2.fasta"
+        genome="resources/saca8_scp1p2_v0.2.fasta"
     output:
         "results/annotation/repeats/MyDatabase-families.fa"
     params:
@@ -140,25 +127,40 @@ rule repeat_masker:
 
         """
 
-#RepeatMasker Pant_hap.fasta -lib Pant_hap-families.fa -pa 4
-#calcDivergenceFromAlign.pl -s Pant_hap_assembly_div Pant_hap.fasta.cat.gz
-#createRepeatLandscape.pl -div Pant_hap_assembly_div -g 365000000 > Pant_Hap_repeatlandscape.html
+## prepare Sacculina RNA-Seq data
+rule rename_reads:
+    output:
+        R1=temp("results/raw/{sample}_1.fq.gz"),
+        R2=temp("results/raw/{sample}_2.fq.gz")
+    params:
+        fwd=lambda wildcards: get_sample_forward('{sample_id}'.format(sample_id=wildcards.sample) ),
+        rev=lambda wildcards: get_sample_reverse('{sample_id}'.format(sample_id=wildcards.sample) )
+    shell:
+        """
+cat resources/RNA-Seq/{params.fwd} > {output.R1}
+cat resources/RNA-Seq/{params.rev} > {output.R2}
+
+        """
 
 
-#rule run_orthofinder:
-#    output:
-#        "results/braker_prot/single_copy_proteins.fas"
-#    threads: workflow.cores
-#    params:
-#        input="resources/external_proteins/primary_transcripts",
-#        base="results/orthofinder",
-#        postfix="my_output"
-#    shell:
-#        """
-#orthofinder -M msa -t {threads} -f {params.input} -y -o {params.base} -n {params.postfix}
-#cat {params.base}/Results_{params.postfix}/Single_Copy_Orthologue_Sequences/*.fa > {output}
-#        """
-
+rule Trim_raw2:
+    input:
+        R1="results/raw/{sample}_1.fq.gz",
+        R2="results/raw/{sample}_2.fq.gz"
+    output: 
+        R1="results/trim/{sample}_1.fq.gz",
+        R2="results/trim/{sample}_2.fq.gz"
+    log: 
+        "results/logs/{sample}_fastp.log"
+    threads:
+        8
+    shell: 
+        """
+(fastp -i {input.R1} -I {input.R2} -o {output.R1} -O {output.R2} --length_required 100 --thread {threads} --low_complexity_filter --detect_adapter_for_pe --trim_poly_x \
+ --json results/logs/fastp/{wildcards.sample}.fastp.json \
+ --html results/logs/fastp/{wildcards.sample}.fastp.html ) &> {log}
+        """
+ 
 
 ######################################
 ## assemble external transcriptomes ##
@@ -244,25 +246,6 @@ rule add_Tax2headers_external:
         "sed -i 's/>/>{params.spec}_/g' {output.OUT}"
 
 
-rule transdecoder_external:
-    input:
-        "results/cirri_assembly_renamed/{sample}.fas"
-    output:
-        "results/transdecoder/externals/{sample}_longest_orfs.pep",
-    params:
-        out_dir="results/transdecoder/externals/",
-        min_prot_length=100,
-    threads: 1
-    log:
-        "results/logs/transdecoder/externals_{sample}.log"
-    shell:
-        """
-( TransDecoder.LongOrfs -t {input} -m {params.min_prot_length} --G universal --output_dir {params.out_dir} 
-        """
-
-
-
-
 #######################
 ## Funannotate Steps ##
 #######################
@@ -309,78 +292,13 @@ rule funannotate_prep:
 funannotate sort --input {output.clean} --out {output.sort} ) &> {log} 
 """
 
-rule map_protein2genome:
-    input:
-        Genome="results/funannotate/genome.clean.sorted.fa",
-        orthofinder="results/braker_prot/single_copy_proteins.fas",
-#        orthodb="resources/orthodb/arthropoda_proteins.fas"
-    output:
-        "results/spaln/orthofinder_mapped_proteins.gff",
-#        "results/spaln/orthodb_mapped_proteins.gff"
-    threads: 56
-    log:
-        "results/logs/protein_mapping_spaln.log"
-    conda:
-         "envs/spaln.yaml"
-    shell:
-        """
-( cp {input.Genome} results/spaln/genome.gf
-
-cd results/spaln
-makeidx.pl -inp genome.gf
-spaln -Q7 -O2 -t{threads} -d genome ../../{input.orthofinder} > orthofinder_mapped_proteins.gff 
-) &> {log}
-        """
-## #cat {input.orthodb} | sed -e '/^>/! s/\W//g' > results/spaln/orthodb_proteins.fas
-#spaln -Q7 -O2 -t{threads} -d genome orthodb_proteins.fas > orthodb_mapped_proteins.gff
-
-
-
-rule funannotate_predict:
-    input:
-        Genome="results/funannotate/genome.clean.sorted.fa",
-        trinity="results/trinity-assembly/Trinity-GG.fasta",
-        bam="results/mapped/all_mapped.hisat2.sorted.bam",
-        check="results/funannotate/setup.ok"
-    output:
-        prot="results/funannotate/predict_results/Sacculina_carcini.proteins.fa"
-    params:  
-        spec=config["funannotate"]["spec"],
-        max_intron=config["funannotate"]["intron"],
-        out_dir="results/funannotate",
-#        DB=config["funannotate"]["DB"]
-    threads: 56
-    container:
-        config["funannotate"]["container"] 
-#    conda:
-#        "envs/funannotate_1.8.9.yaml"
-#    envmodules:
-#        "gmes/4.57"
-    log:
-        "results/logs/funannotate_predict_run.log"
-    shell:
-        """
-(funannotate predict --input {input.Genome} --transcript_evidence {input.trinity} --cpus {threads} --species "{params.spec}" --max_intronlen {params.max_intron} \
---out {params.out_dir} --rna_bam {input.bam}  --optimize_augustus --organism other --busco_db arthropoda --busco_seed_species fly --name SACA ) &> {log}
-"""
-
-# not sure if fly is the best busco_seed_species...
-# --busco_seed_species
-# maybe compare to aedes, honeybee1 or others....
-
-#cp -r /usr/local/config results/funannotate/
-# --AUGUSTUS_CONFIG_PATH results/funannotate/config
-
-# --database {params.DB}
 # databases are already present in the container
 
-#funannotate_train.pasa.gff3
 rule funannotate_train:
     input:
         Genome="results/funannotate/genome.clean.sorted.fa",
         R1=print_all_forward(),
         R2=print_all_reverse(),
-        trinity="results/trinity-assembly/Trinity-GG.fasta",
         check="results/funannotate/setup.ok",
     output:
         "results/funannotate2/training/funannotate_train.pasa.gff3"
@@ -395,8 +313,14 @@ rule funannotate_train:
         "results/logs/funannotate2_train_run.log"
     shell:
         """
-(funannotate train --input {input.Genome} --trinity {input.trinity} --cpus {threads} --species "{params.spec}" --max_intronlen {params.max_intron} \
---out {params.out_dir} --left {input.R1} --right {input.R2} ) &> {log}
+(funannotate train \
+    --input {input.Genome} \
+    --cpus {threads} \
+    --species "{params.spec}" \
+    --max_intronlen {params.max_intron} \
+    --out {params.out_dir} \
+    --left {input.R1} \
+    --right {input.R2} ) &> {log}
 """
 
 
@@ -409,7 +333,8 @@ rule funannotate_predict2:
         TSA=get_all_tsa_files(),
         Cirri_assembled=expand("results/cirri_assembly_renamed/{cirri_sample}.fas", cirri_sample=CIRRI_SPEC)
     output:
-        prot="results/funannotate2/predict_results/Sacculina_carcini.proteins.fa"
+        prot="results/funannotate2/predict_results/Sacculina_carcini.proteins.fa",
+        annot="results/funannotate2/predict_results/Sacculina_carcini.gff3"
     params:
         spec=config["funannotate"]["spec"],
         max_intron=config["funannotate"]["intron"],
@@ -433,15 +358,43 @@ funannotate predict --input {input.Genome} --transcript_evidence {input.TSA} {in
 --out {params.out_dir} --optimize_augustus --organism other --busco_db arthropoda --busco_seed_species fly --name SACA --keep_evm \
 ) &> {log}
 """
-### Comments... 
-## --protein_evidence # uniprot data as well ?
 
+rule funannotate_update:
+    input:
+        Genome="results/funannotate/genome.clean.sorted.fa",
+        annot="results/funannotate2/predict_results/Sacculina_carcini.gff3",
+        R1=print_all_forward(),
+        R2=print_all_reverse(),
+    output:
+        xx="results/funannotate2/someupdate"
+    params:
+        spec=config["funannotate"]["spec"],
+        max_intron=config["funannotate"]["intron"],
+        out_dir="results/funannotate2",
+    threads: 56
+    container:
+        config["funannotate"]["container"]
+    log:
+        "results/logs/funannotate_update_run.log"
+    shell:
+        """
+(
 
-#### need to take the input from the extend run!!!
+funannotate update \
+    --fasta {input.Genome} \
+    --gff {input.annot} \
+    --cpus {threads} \
+    --species "{params.spec}" \
+    --max_intronlen {params.max_intron} \
+    --out {params.out_dir} \
+    --left {input.R1} --right {input.R2} 
+
+) &> {log}
+"""
 
 rule interproscan_funannotate:
     input:
-        protein="results/funannotate2/predict_results/Sacculina_carcini.proteins.fa"
+        "results/funannotate2/predict_results/Sacculina_carcini.proteins.fa"
     output:
         "results/funannotate2/interproscan.output.xml"
     threads: 40
@@ -494,7 +447,6 @@ rule run_orthofinder:
     output:
         dir=directory("results/orthofinder/run_1"),
         check=touch("results/orthofinder/run_1.ok"),
-#        orthos=dynamic("results/orthofinder/run_1/Results_my_output/Orthogroup_Sequences/{orthogroup}.fa"),
     threads:
         40
     params:
@@ -522,47 +474,43 @@ cat results/orthofinder/run_1/Results_my_output/Orthogroup_Sequences/*.fa > {out
         """
 
 
-# rule extend_orthofinder:
-#     input:
-#         OrthoOK="results/orthofinder/run_1.ok",
-#         Pep="results/funannotate2/predict_results/Sacculina_carcini.proteins.fa"
-#     output:
-#         dynamic("results/orthofinder/run_1/Results_my_output/WorkingDirectory/OrthoFinder/Results_my_output2/Orthogroup_Sequences/{orthogroup}.fa"),
-# #        directory("results/orthofinder/run_1/Results_my_output/WorkingDirectory/OrthoFinder/Results_my_output2"), #/Results_my_output/WorkingDirectory/SpeciesIDs.txt"
-# #        touch("results/orthofinder/run_2.ok")
-#     threads:
-#         40
-#     params:
-#         input="results/orthofinder/new_fasta_directory",
-#         wrkdr="results/orthofinder/run_1/Results_my_output/WorkingDirectory/",
-#         postfix="my_output2"
-#     shell:
-#         """
-# mkdir -p {params.input}/
-# cp {input.Pep} {params.input}/Sacculina_carcini.fas
-# orthofinder -M msa -t {threads} -b {params.wrkdr} -f {params.input} -y -n {params.postfix}
-#         """
+rule extend_orthofinder:
+    input:
+        OrthoOK="results/orthofinder/run_1.ok",
+        Pep="results/funannotate2/predict_results/Sacculina_carcini.proteins.fa"
+    output:
+        dynamic("results/orthofinder/run_1/Results_my_output/WorkingDirectory/OrthoFinder/Results_my_output2/Orthogroup_Sequences/{orthogroup}.fa"),
+    threads:
+        40
+    params:
+        input="results/orthofinder/new_fasta_directory",
+        wrkdr="results/orthofinder/run_1/Results_my_output/WorkingDirectory/",
+        postfix="my_output2"
+    shell:
+        """
+mkdir -p {params.input}/
+cp {input.Pep} {params.input}/Sacculina_carcini.fas
+orthofinder -M msa -t {threads} -b {params.wrkdr} -f {params.input} -y -n {params.postfix}
+        """
 
-# rule rerun_orthofinder_root:
-#     input:
-#         dynamic("results/orthofinder/run_1/Results_my_output/WorkingDirectory/OrthoFinder/Results_my_output2/Orthogroup_Sequences/{orthogroup}.fa")
-#         #"results/orthofinder/run_2.ok"
-#     output:
-#         #directory("results/orthofinder/run_1/Results_my_output/WorkingDirectory/OrthoFinder/Results_my_output2"), #/Results_my_output/WorkingDirectory/SpeciesIDs.txt"
-#         touch("results/orthofinder/run_3.ok")
-#     threads: 40
-#     params:
-#         input="results/orthofinder/new_fasta_directory",
-#         wrkdr="results/orthofinder/run_1/Results_my_output/WorkingDirectory/",
-#         postfix="NewTree",
-#         outgroups="Ischnura_elegans,Schistocerca_americana,Tribolium_castaneum,Apis_mellifera"
-#     shell:
-#         """
-# echo {params.outgroups} | gotree reroot outgroup -i results/orthofinder/run_1/Results_my_output/WorkingDirectory/OrthoFinder/Results_my_output2/Species_Tree/SpeciesTree_rooted.txt -l - > \
-# results/orthofinder/SpeciesTree_rooted.nwk
+rule rerun_orthofinder_root:
+    input:
+        dynamic("results/orthofinder/run_1/Results_my_output/WorkingDirectory/OrthoFinder/Results_my_output2/Orthogroup_Sequences/{orthogroup}.fa")
+    output:
+        touch("results/orthofinder/run_3.ok")
+    threads: 40
+    params:
+        input="results/orthofinder/new_fasta_directory",
+        wrkdr="results/orthofinder/run_1/Results_my_output/WorkingDirectory/",
+        postfix="NewTree",
+        outgroups="Ischnura_elegans,Schistocerca_americana,Tribolium_castaneum,Apis_mellifera"
+    shell:
+        """
+echo {params.outgroups} | gotree reroot outgroup -i results/orthofinder/run_1/Results_my_output/WorkingDirectory/OrthoFinder/Results_my_output2/Species_Tree/SpeciesTree_rooted.txt -l - > \
+results/orthofinder/SpeciesTree_rooted.nwk
 
-# orthofinder -M msa -t {threads} -ft results/orthofinder/run_1/Results_my_output/WorkingDirectory/OrthoFinder/Results_my_output2 -y -s results/orthofinder/SpeciesTree_rooted.nwk -n {params.postfix}
-#         """
+orthofinder -M msa -t {threads} -ft results/orthofinder/run_1/Results_my_output/WorkingDirectory/OrthoFinder/Results_my_output2 -y -s results/orthofinder/SpeciesTree_rooted.nwk -n {params.postfix}
+        """
 
 #### need to take the input from the extend run!!!
 rule interproscan_orthofinder:
@@ -583,12 +531,9 @@ interproscan.sh -input {input} -formats tsv -disable-precalc --goterms --outfile
 """
 
 
-
-
 ########################
 ## RUN BUSCO ANALYSIS ##
 ########################
-
 
 
 rule busco_genome:
@@ -610,60 +555,6 @@ busco -f -m {params.mode} -i {input} -o {params.dir} -l {params.lineage} --cpu {
         """
 
 
-rule busco_trans:
-    input:
-        "results/trinity-assembly/Trinity-GG.fasta"
-    output:
-        "results/busco_analysis/busco_trinity/short_summary.specific.arthropoda_odb10.busco_trinity.txt"
-    params:
-        dir="busco_trinity",
-        lineage="arthropoda_odb10",
-        mode="transcriptome",
-        config="resources/busco_config.ini"
-    threads: 20
-    log:
-        "results/logs/busco_analysis/busco_trinity.log"
-    shell:
-        """
-busco -f -m {params.mode} -i {input} -o {params.dir} -l {params.lineage} --cpu {threads} --config {params.config} &> {log}
-        """
-
-
-rule busco_fun_prot:
-    input:
-        "results/funannotate/predict_results/Sacculina_carcini.proteins.fa"
-    output:
-        "results/busco_analysis/busco_fun_prot/short_summary.specific.arthropoda_odb10.busco_fun_prot.txt"
-    params:
-        dir="busco_fun_prot",
-        lineage="arthropoda_odb10",
-        mode="protein",
-        config="resources/busco_config.ini"
-    threads: workflow.cores
-    log:
-        "results/logs/busco_analysis/busco_fun_prot.log"
-    shell:
-        """
-( busco -f -m {params.mode} -i {input} -o {params.dir} -l {params.lineage} --cpu {threads} --config {params.config} ) &> {log}
-        """
-
-rule busco_summary:
-    input:
-        "results/busco_analysis/busco_genome/short_summary.specific.arthropoda_odb10.busco_genome.txt",
-        "results/busco_analysis/busco_fun_prot/short_summary.specific.arthropoda_odb10.busco_fun_prot.txt",
-        "results/busco_analysis/busco_trinity/short_summary.specific.arthropoda_odb10.busco_trinity.txt",
-    output:
-        "results/busco_analysis/busco_summary/busco_figure.png"
-    params:
-        dir="results/busco_analysis/busco_summary"
-    threads: 1
-    shell:
-        """
-for file in {input}; do cp $file {params.dir}/ ; done
-generate_plot.py -wd {params.dir}
-        """
-
-
 rule busco_fun_prot2:
     input:
         "results/funannotate2/predict_results/Sacculina_carcini.proteins.fa"
@@ -682,6 +573,21 @@ rule busco_fun_prot2:
 ( busco -f -m {params.mode} -i {input} -o {params.dir} -l {params.lineage} --cpu {threads} --config {params.config} ) &> {log}
         """
 
+
+rule busco_summary:
+    input:
+        "results/busco_analysis/busco_genome/short_summary.specific.arthropoda_odb10.busco_genome.txt",
+        "results/busco_analysis/busco_fun_prot2/short_summary.specific.arthropoda_odb10.busco_fun_prot2.txt",
+    output:
+        "results/busco_analysis/busco_summary/busco_figure.png"
+    params:
+        dir="results/busco_analysis/busco_summary"
+    threads: 1
+    shell:
+        """
+for file in {input}; do cp $file {params.dir}/ ; done
+generate_plot.py -wd {params.dir}
+        """
 
 
 ### Busco external TSA
@@ -726,5 +632,3 @@ rule busco_cirri:
         """
 busco -f -m {params.mode} -i {input} --out_path {params.path} -o {params.dir} -l {params.lineage} --cpu {threads} --config {params.config} &> {log}
         """
-
-
