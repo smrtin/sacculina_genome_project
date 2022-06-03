@@ -1,4 +1,15 @@
 workflow/Snakefile
 workflow/Snakefile_fun
 workflow/container/funannotate.sif
+SGE_logs/*
+!SGE_logs/.keep
 
+#ignore all result files
+results/*
+
+# ignore all snakemake internal files
+.snakemake/*
+
+# ignore all external files
+
+resources/*

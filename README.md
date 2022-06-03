@@ -15,13 +15,20 @@ https://www.ncbi.nlm.nih.gov/bioproject/659937
 
 ## Prerequisites
 
+Anaconda3 and singularity.
+
 conda environment.yaml -> update to latest packages and adjust versions!
 
 # Workflow
 
+Different steps of the workflow are performed with snakemake. Each step can be started individually and we also provide a Jobscript for a SGE queuingsystem.
+
+
 ## Genome assembly
 
 ## Genome annotation 
+
+Genome annotation is performed with FUNANNOTATE. We use the genome and RNA-Seq data for training and external data during the prediction. As external data from other Cirripedia we downloaded available TSA files from NCBI with the '02_download_TSA_cirripedia.sh'-script. In addition tho these Sequence files we also downloaded and assembled RNA-Seq data from three cirriped species.
 
 ## Comparative genomics
 
