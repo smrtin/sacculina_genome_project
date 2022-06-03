@@ -1,6 +1,8 @@
-#####################################
-# workflow for the Sacculina Genome #
-#####################################
+#########################################
+#   workflow for the Sacculina Genome   #
+#       annotation and orthology        #
+#########################################
+
 # report: "report/workflow.rst"
 
 localrules: funannotate_setup
@@ -16,6 +18,7 @@ externals = pd.read_table(config["sample_external"] , dtype=str).set_index(["spe
 
 CIRRI_SPEC=['Tetraclita_japonica_formosana', 'Amphibalanus_amphitrite', 'Pollicipes_pollicipes']
 
+## Functions 
 
 def get_sample_forward_cirri(sample_id):         
     dct = {}
@@ -69,11 +72,12 @@ def print_all_reverse():
         mylist.append("results/trim/{sample}_2.fq.gz".format(sample=dataset))     
     return sorted(set(mylist))
 
+## WORKFLOW ##
 
 rule all:
     input:
-        "results/annotation/repeats/MyDatabase-families.fa",
-        "results/annotation/repeats/Genome.fasta.masked"
+        dynamic("results/orthofinder/interproscan/{orthogroup}.tsv"),
+        "results/funannotate2/annotate_step.complete"
     shell:
          """
 	 echo "final step"	
@@ -503,7 +507,7 @@ rule rerun_orthofinder_root:
         input="results/orthofinder/new_fasta_directory",
         wrkdr="results/orthofinder/run_1/Results_my_output/WorkingDirectory/",
         postfix="NewTree",
-        outgroups="Ischnura_elegans,Schistocerca_americana,Tribolium_castaneum,Apis_mellifera"
+        outgroups="Notodromas_monacha,Darwinula_stevensoni"
     shell:
         """
 echo {params.outgroups} | gotree reroot outgroup -i results/orthofinder/run_1/Results_my_output/WorkingDirectory/OrthoFinder/Results_my_output2/Species_Tree/SpeciesTree_rooted.txt -l - > \
