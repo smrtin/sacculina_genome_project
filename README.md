@@ -11,6 +11,8 @@ Here we document the analysis steps and provide a snakmake workflow.
 
 ## Prerequisits
 
+conda environment.yaml -> update to latest packages and adjust versions!
+
 # Workflow
 
 ## Genome assembly
