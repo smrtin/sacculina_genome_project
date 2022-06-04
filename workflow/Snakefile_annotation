@@ -77,7 +77,6 @@ def print_all_reverse():
 rule all:
     input:
         dynamic("results/orthofinder/interproscan/{orthogroup}.tsv"),
-        "results/funannotate2/annotate_step.complete"
     shell:
          """
 	 echo "final step"	
@@ -363,38 +362,36 @@ funannotate predict --input {input.Genome} --transcript_evidence {input.TSA} {in
 ) &> {log}
 """
 
-rule funannotate_update:
-    input:
-        Genome="results/funannotate/genome.clean.sorted.fa",
-        annot="results/funannotate2/predict_results/Sacculina_carcini.gff3",
-        R1=print_all_forward(),
-        R2=print_all_reverse(),
-    output:
-        xx="results/funannotate2/someupdate"
-    params:
-        spec=config["funannotate"]["spec"],
-        max_intron=config["funannotate"]["intron"],
-        out_dir="results/funannotate2",
-    threads: 56
-    container:
-        config["funannotate"]["container"]
-    log:
-        "results/logs/funannotate_update_run.log"
-    shell:
-        """
-(
-
-funannotate update \
-    --fasta {input.Genome} \
-    --gff {input.annot} \
-    --cpus {threads} \
-    --species "{params.spec}" \
-    --max_intronlen {params.max_intron} \
-    --out {params.out_dir} \
-    --left {input.R1} --right {input.R2} 
-
-) &> {log}
-"""
+# rule funannotate_update:
+#     input:
+#         Genome="results/funannotate/genome.clean.sorted.fa",
+#         annot="results/funannotate2/predict_results/Sacculina_carcini.gff3",
+#         R1=print_all_forward(),
+#         R2=print_all_reverse(),
+#     output:
+#         xx="results/funannotate2/someupdate"
+#     params:
+#         spec=config["funannotate"]["spec"],
+#         max_intron=config["funannotate"]["intron"],
+#         out_dir="results/funannotate2",
+#     threads: 56
+#     container:
+#         config["funannotate"]["container"]
+#     log:
+#         "results/logs/funannotate_update_run.log"
+#     shell:
+#         """
+# (
+# funannotate update \
+#     --fasta {input.Genome} \
+#     --gff {input.annot} \
+#     --cpus {threads} \
+#     --species "{params.spec}" \
+#     --max_intronlen {params.max_intron} \
+#     --out {params.out_dir} \
+#     --left {input.R1} --right {input.R2} 
+# ) &> {log}
+# """
 
 rule interproscan_funannotate:
     input:
@@ -433,19 +430,13 @@ rule funannotate_annotate:
 funannotate annotate --input {params.predict_dir} --gff {input.gff} --fasta {input.genome} --iprscan {input.iprscan} --busco_db {params.busco} --out {params.out_dir} --cpus {threads}
         """
 
-## not sure if it works like this ... might need to join conda and envmodules... 
-# could also try to incorporate the singularity/docker container
-
-### rule funannotate_annotate
-# https://funannotate.readthedocs.io/en/latest/commands.html?highlight=bam#adding-functional-annotation 
 
 ###############
 ## ORTHOLOGY ##
 ###############
 
-# orthofinder preparations need to be included here! to create the primary_transcripts directory....
-# orthofinder analysis only with genome based gene predictions. 
-# We dont include Translated Transcriptomes now!
+
+# orthofinder analysis only with genome based gene predictions. Isoforms removed with Remove_isoforms.py script
 
 rule run_orthofinder:
     output:

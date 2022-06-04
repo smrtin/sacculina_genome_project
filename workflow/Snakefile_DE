@@ -137,7 +137,7 @@ rule map_all_trimmed_hisat2:
     input:
         R1=print_all_forward(),
         R2=print_all_reverse(),
-        Genome="results/funannotate/genome.clean.sorted.fa" ##config["genome"]
+        Genome="results/funannotate2/genome.clean.sorted.fa" ##config["genome"]
     output:
         "results/differential_expression/mapped/all_mapped.hisat2.sam"
     threads:
