@@ -1,0 +1,11 @@
+category	over_represented_pvalue	under_represented_pvalue	numDEInCat	numInCat	term	ontology	over_represented_FDR	under_represented_FDR	go_term
+GO:0015074	0.999999978302347	1.71801416614468e-07	4	73	DNA integration	BP	0.9999999999	0.000110983715132947	BP DNA integration
+GO:0055085	0.999999652813124	2.43911188795838e-06	4	61	transmembrane transport	BP	0.9999999999	0.000787833139810557	BP transmembrane transport
+GO:0016020	0.999539998992379	0.00116513482908916	14	83	membrane	CC	0.9999999999	0.250892366530532	CC membrane
+GO:0022857	0.997913798651786	0.0118025542610149	2	21	transmembrane transporter activity	MF	0.9999999999	0.9999999999	MF transmembrane transporter activity
+GO:0004672	0.994779781625966	0.0136435179827035	8	49	protein kinase activity	MF	0.9999999999	0.9999999999	MF protein kinase activity
+GO:0006468	0.994779781625966	0.0136435179827035	8	49	protein phosphorylation	BP	0.9999999999	0.9999999999	BP protein phosphorylation
+GO:0005975	0.991733726365	0.0319810945542707	3	21	carbohydrate metabolic process	BP	0.9999999999	0.9999999999	BP carbohydrate metabolic process
+GO:0007186	1	0.0335844254605234	0	8	G protein-coupled receptor signaling pathway	BP	0.9999999999	0.9999999999	BP G protein-coupled receptor signaling pathway
+GO:0004842	0.995212647292502	0.0364596797547733	1	13	ubiquitin-protein transferase activity	MF	0.9999999999	0.9999999999	MF ubiquitin-protein transferase activity
+GO:0007156	1	0.0369725919506945	0	10	homophilic cell adhesion via plasma membrane adhesion molecules	BP	0.9999999999	0.9999999999	BP homophilic cell adhesion via plasma membrane adhesion molecules
