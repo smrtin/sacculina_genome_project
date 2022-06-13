@@ -149,7 +149,8 @@ rule repeat_modeler:
     input:
         genome="results/funannotate/genome.clean.sorted.fas"
     output:
-        "results/repeats/MyDatabase-families.fa"
+        DB="results/repeats/MyDatabase-families.fa",
+        genome="results/repeats/genome.fas"
     params:
         database="MyDatabase",
         work="results/repeats",
@@ -163,9 +164,9 @@ rule repeat_modeler:
     shell:
         """
         ( [ ! -d {params.work} ] && mkdir -p {params.work} # create working directory
-        cp {input.genome} {params.work}/Genome.fasta
+        cp {input.genome} {params.work}/genome.fas
         cd {params.work}
-        BuildDatabase -engine {params.engine} -name {params.database} Genome.fasta
+        BuildDatabase -engine {params.engine} -name {params.database} genome.fas
 
         RepeatModeler -database {params.database} -engine {params.engine} -pa {threads} ) &> {log}
 
@@ -192,9 +193,9 @@ rule repeat_masker:
         """
         [ ! -d {params.work} ] && mkdir -p {params.work} # create working directory
         cd {params.work}
-        RepeatMasker Genome.fasta -lib ../../{input} -pa {threads}
+        RepeatMasker genome.fas -lib ../../{input} -pa {threads}
         
-        calcDivergenceFromAlign.pl -s Assembly_div_summary Genome.fasta.cat.gz
+        calcDivergenceFromAlign.pl -s Assembly_div_summary genome.fas.cat.gz
         createRepeatLandscape.pl -div Assembly_div_summary -g 365000000 > Genome_repeatlandscape.html
 
         """
