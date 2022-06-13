@@ -15,8 +15,6 @@ samples = pd.read_table(config["sample_info"] , dtype=str).set_index(["Sample"],
 
 rule all:
     input:
-        "results/genome_assembly/mapped_reads/Genome_read_ali.sort.bam",
-        "results/genome_assembly/mapped_reads_scaffolds/Genome_read_ali.sort.bam",
         "results/genome_assembly/pilon_2/saca8_scaff1_p2.fasta"
     shell:
          """
@@ -34,9 +32,11 @@ rule filter_long_reads:
         max_length='1000000'
     conda:
         "envs/assembly.yaml"
+    log:
+        "results/logs/filter_long_reads.log"
     shell:
         """
-perl workflow/scripts/filterseqlength.pl {input} {params.min_length} {params.max_length} {output}
+perl workflow/scripts/filter_seqlength.pl {input} {params.min_length} {params.max_length} {output} &> {log}
         """
 
 
@@ -49,9 +49,11 @@ rule trim_ont_reads:
         30
     conda:
         "envs/assembly.yaml"
+    log:
+        "results/logs/trim_ont_reads.log"
     shell:
         """
-porechop -t {threads} --discard_middle -i {input} -o {output}
+porechop -t {threads} --discard_middle -i {input} -o {output} &> {log}
         """
 
 
@@ -61,17 +63,19 @@ rule flye_assembly:
     output:
         "results/genome_assembly/saca8_flye.fasta"
     params:
-        out_dir="/results/genome_assembly/flye_assembly",
+        out_dir="results/genome_assembly/flye_assembly",
         size="400m"
     threads:
         50
     conda:
         "envs/assembly.yaml"
+    log:
+        "results/logs/flye_assembly.log"
     shell:
         """
-flye --nano-raw {input} --genome-size {params.size} --threads {threads} --out-dir {params.out_dir}
+(flye --nano-raw {input} --genome-size {params.size} --threads {threads} --out-dir {params.out_dir}
 sleep 100
-cp  {params.out_dir}/assembly.fasta {output} 
+cp  {params.out_dir}/assembly.fasta {output} ) &> {log}
         """
 
 rule trim_short_reads:
@@ -81,9 +85,12 @@ rule trim_short_reads:
     output:
         R1="results/genome_assembly/trim_short/saca_8kb_A.fq",
         R2="results/genome_assembly/trim_short/saca_8kb_B.fq"
-    threads: 16 
+    threads: 
+        16 
     conda:
         "envs/assembly.yaml"
+    log:
+        "results/logs/trim_short_reads.log"
     shell:
         """
 fastp \
@@ -97,7 +104,7 @@ fastp \
     --trim_poly_x \
     --thread {threads} \
     --json results/genome_assembly/trim_short/saca.fastp.json \
-    --html results/genome_assembly/trim_short/saca.fastp.html  
+    --html results/genome_assembly/trim_short/saca.fastp.html  &> {log}
     
 """
 
@@ -109,18 +116,21 @@ rule map_bwa:
         rev="results/genome_assembly/trim_short/saca_8kb_B.fq"
     output:
         "results/genome_assembly/mapped_reads/Genome_read_ali.sam"
-    threads: 32
     params:
         prefix="results/genome_assembly/mapped_reads/Genome"
+    threads: 
+        32
     conda:
         "envs/assembly.yaml"
+    log:
+        "results/logs/map_bwa.log"
     shell:
         """
-bwa index -p {params.prefix} -a is {input.genome}
+(bwa index -p {params.prefix} -a is {input.genome}
 
 sleep 100
 
-bwa mem -o {output} -t {threads} {params.prefix} {input.fwd} {input.rev}
+bwa mem -o {output} -t {threads} {params.prefix} {input.fwd} {input.rev} ) &> {log}
 
         """
 
@@ -132,18 +142,20 @@ rule sam2bam:
         sort="results/genome_assembly/mapped_reads/Genome_read_ali.sort.bam"
     conda:
         "envs/assembly.yaml"
+    log:
+        "results/logs/sam2bam.log"
     shell:
         """
-samtools view -Sb {input} > {output.bam}
+( samtools view -Sb {input} > {output.bam}
 samtools sort {output.bam} > {output.sort}
-samtools index {output.sort}
+samtools index {output.sort} ) &> {log}
 
         """
 ##should also include index in output files...
 
 
 ### using mate-pairs for sacffolding with BESST v.2.0
-rule scaffolding_step:
+rule scaffolding:
     input:
         genome="results/genome_assembly/saca8_flye.fasta",
         bam="results/genome_assembly/mapped_reads/Genome_read_ali.sort.bam"
@@ -156,9 +168,11 @@ rule scaffolding_step:
         out_dir="results/genome_assembly/scaffolding"
     conda:
         "envs/besst.yaml"
+    log:
+        "results/logs/scaffolding.log"
     shell:
         """
-runBESST --no_score \
+( runBESST --no_score \
     -m {params.insert_size} \
     -s {params.std_dev} \
     -c {input.genome} \
@@ -167,7 +181,7 @@ runBESST --no_score \
     -orientation rf
 
 sleep 100 
-cp {output.scaf} {output.final}
+cp {output.scaf} {output.final} ) &> {log}
 
     """
 
@@ -178,18 +192,21 @@ rule map_bwa_scaffolds:
         rev="results/genome_assembly/trim_short/saca_8kb_B.fq"
     output:
         "results/genome_assembly/mapped_reads_scaffolds/Genome_read_ali.sam"
-    threads: 32
     params:
         prefix="results/genome_assembly/mapped_reads_scaffolds/Genome"
+    threads: 
+        32
     conda:
         "envs/assembly.yaml"
+    log:
+        "results/logs/map_bwa_scaffolds.log"
     shell:
         """
-bwa index -p {params.prefix} -a is {input.fasta}
+( bwa index -p {params.prefix} -a is {input.fasta}
 
 sleep 100
 
-bwa mem -o {output} -t {threads} {params.prefix} {input.fwd} {input.rev}
+bwa mem -o {output} -t {threads} {params.prefix} {input.fwd} {input.rev} ) &> {log}
 
         """
 
@@ -201,11 +218,13 @@ rule sam2bam_scaffolds:
         sort="results/genome_assembly/mapped_reads_scaffolds/Genome_read_ali.sort.bam"
     conda:
         "envs/assembly.yaml"
+    log:
+        "results/logs/sam2bam_scaffolds.log"
     shell:
         """
-samtools view -Sb {input} > {output.bam}
+( samtools view -Sb {input} > {output.bam}
 samtools sort {output.bam} > {output.sort}
-samtools index {output.sort}
+samtools index {output.sort} ) &> {log}
 
         """
 ### mapping shortreads & pilon polishing using saca8_scaff1.fasta from step before
@@ -218,20 +237,23 @@ rule run_pilon_1:
     output:
         "results/genome_assembly/pilon_1/saca8_scaff1_p1.fasta"
     params:
-        prefix="results/genome_assembly/pilon_1/"
+        prefix="results/genome_assembly/pilon_1/",
+        out="results/genome_assembly/pilon_1/saca8_scaff1_p1" #.fasta is automatically added 
     threads:
         20
     conda:
         "envs/assembly.yaml"
+    log:
+        "results/logs/pilon_1.log"
     shell:
         """
 
-export _JAVA_OPTIONS='-Xmx500g'
+( export _JAVA_OPTIONS='-Xmx500g'
 mkdir -p {params.prefix}
 
 pilon --genome {input.fasta} --fix snps,indels,gaps --changes \
     --frags {input.bam} \
-    --output {output}
+    --output {params.out} ) &> {log}
 
         """
 
@@ -243,18 +265,21 @@ rule map_bwa_pilon:
         rev="results/genome_assembly/trim_short/saca_8kb_B.fq"
     output:
         "results/genome_assembly/mapped_reads_pilon1/Genome_read_ali.sam"
-    threads: 32
     params:
         prefix="results/genome_assembly/mapped_reads_pilon1/Genome"
+    threads: 
+        32
     conda:
         "envs/assembly.yaml"
+    log:
+        "results/logs/map_bwa_pilon.log"
     shell:
         """
-bwa index -p {params.prefix} -a is {input.fasta}
+( bwa index -p {params.prefix} -a is {input.fasta}
 
 sleep 100
 
-bwa mem -o {output} -t {threads} {params.prefix} {input.fwd} {input.rev}
+bwa mem -o {output} -t {threads} {params.prefix} {input.fwd} {input.rev} ) &> {log}
 
         """
 
@@ -266,11 +291,13 @@ rule sam2bam_pilon:
         sort="results/genome_assembly/mapped_reads_pilon1/Genome_read_ali.sort.bam"
     conda:
         "envs/assembly.yaml"
+    log:
+        "results/logs/sam2bam_pilon.log"
     shell:
         """
-samtools view -Sb {input} > {output.bam}
+( samtools view -Sb {input} > {output.bam}
 samtools sort {output.bam} > {output.sort}
-samtools index {output.sort}
+samtools index {output.sort} ) &> {log}
 
         """
 ### mapping shortreads & pilon polishing using saca8_scaff1.fasta from step before
@@ -283,20 +310,22 @@ rule run_pilon_2:
     output:
         "results/genome_assembly/pilon_2/saca8_scaff1_p2.fasta"
     params:
-        prefix="results/genome_assembly/pilon_2"
+        prefix="results/genome_assembly/pilon_2",
+        out="results/genome_assembly/pilon_2/saca8_scaff1_p2" # .fasta is automatically added 
     threads:
         20
     conda:
         "envs/assembly.yaml"
+    log:
+        "results/logs/pilon_2.log"
     shell:
         """
-
-export _JAVA_OPTIONS='-Xmx500g'
+( export _JAVA_OPTIONS='-Xmx500g'
 mkdir -p {params.prefix}
 
 pilon --genome {input.fasta} --fix snps,indels,gaps --changes \
     --frags {input.bam} \
-    --output {output}
+    --output {params.out} ) &> {log}
 
         """
 

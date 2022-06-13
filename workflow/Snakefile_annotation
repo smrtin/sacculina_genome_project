@@ -8,6 +8,7 @@
 localrules: funannotate_setup
 configfile: "workflow/config/config.yaml"
 
+from unittest.util import _count_diff_all_purpose
 import pandas as pd 
 from os import listdir
 from os.path import isfile, join
@@ -16,9 +17,14 @@ samples = pd.read_table(config["sample_info"] , dtype=str).set_index(["Sample"],
 samples_cirri = pd.read_table(config["sample_info_cirri"] , dtype=str).set_index(["Sample"], drop=False)
 externals = pd.read_table(config["sample_external"] , dtype=str).set_index(["species"], drop=False)
 
-CIRRI_SPEC=['Tetraclita_japonica_formosana', 'Amphibalanus_amphitrite', 'Pollicipes_pollicipes']
 
-## Functions 
+## Functions ##
+ 
+def get_taxa_list_cirri():
+    mylist = []
+    for taxon in samples_cirri['Taxon'].tolist():
+        mylist.append(taxon)
+    return list(set(mylist))
 
 def get_sample_forward_cirri(sample_id):         
     dct = {}
@@ -63,191 +69,33 @@ def get_sample_reverse(sample_id):
 def print_all_forward():
     mylist=[]
     for dataset in samples['Sample'].tolist():
-        mylist.append("results/trim/{sample}_1.fq.gz".format(sample=dataset))
+        mylist.append("results/RNA-Seq/trim/{sample}_1.fq.gz".format(sample=dataset))
     return sorted(set(mylist))
 
 def print_all_reverse():
     mylist=[]
     for dataset in samples['Sample'].tolist():
-        mylist.append("results/trim/{sample}_2.fq.gz".format(sample=dataset))     
+        mylist.append("results/RNA-Seq/trim/{sample}_2.fq.gz".format(sample=dataset))     
     return sorted(set(mylist))
+
+def get_masked_genome():
+    if config["genome"]["masking"] == "yes" :
+        return("results/repeats/genome.fas.masked")
+    if config["genome"]["masking"] == "no" :
+        return("results/funannotate/genome.clean.sorted.fas")
+
 
 ## WORKFLOW ##
 
 rule all:
     input:
-        dynamic("results/orthofinder/interproscan/{orthogroup}.tsv"),
+        #dynamic("results/orthofinder/interproscan/{orthogroup}.tsv"),
+        "results/funannotate/annotate_step.complete",
+        "results/busco_analysis/busco_summary/busco_figure.png",
     shell:
          """
 	 echo "final step"	
          """
-
-rule repeat_modeler:
-    input:
-        genome="resources/saca8_scp1p2_v0.2.fasta"
-    output:
-        "results/annotation/repeats/MyDatabase-families.fa"
-    params:
-        database="MyDatabase",
-        work="results/annotation/repeats",
-        engine="ncbi"
-    threads: 50
-    container: 
-        config["masking"]["container"]
-    shell:
-        """
-        [ ! -d {params.work} ] && mkdir -p {params.work} # create working directory
-        cp {input.genome} {params.work}/Genome.fasta
-        cd {params.work}
-        BuildDatabase -engine {params.engine} -name {params.database} Genome.fasta
-
-        RepeatModeler -database {params.database} -engine {params.engine} -pa {threads}
-
-        """
-
-### remove proteome hits from repeat database
-
-rule repeat_masker:
-    input:
-        "results/annotation/repeats/MyDatabase-families.fa"
-    output:
-        "results/annotation/repeats/Genome.fasta.masked"
-    params:
-        database="MyDatabase",
-        work="results/annotation/repeats",
-        engine="ncbi"
-    threads: 50
-    container: 
-        config["masking"]["container"]
-    shell:
-        """
-        [ ! -d {params.work} ] && mkdir -p {params.work} # create working directory
-        cd {params.work}
-        RepeatMasker Genome.fasta -lib ../../../{input} -pa {threads}
-        
-        calcDivergenceFromAlign.pl -s Assembly_div_summary Genome.fasta.cat.gz
-        createRepeatLandscape.pl -div Assembly_div_summary -g 365000000 > Genome_repeatlandscape.html
-
-        """
-
-## prepare Sacculina RNA-Seq data
-rule rename_reads:
-    output:
-        R1=temp("results/raw/{sample}_1.fq.gz"),
-        R2=temp("results/raw/{sample}_2.fq.gz")
-    params:
-        fwd=lambda wildcards: get_sample_forward('{sample_id}'.format(sample_id=wildcards.sample) ),
-        rev=lambda wildcards: get_sample_reverse('{sample_id}'.format(sample_id=wildcards.sample) )
-    shell:
-        """
-cat resources/RNA-Seq/{params.fwd} > {output.R1}
-cat resources/RNA-Seq/{params.rev} > {output.R2}
-
-        """
-
-
-rule Trim_raw2:
-    input:
-        R1="results/raw/{sample}_1.fq.gz",
-        R2="results/raw/{sample}_2.fq.gz"
-    output: 
-        R1="results/trim/{sample}_1.fq.gz",
-        R2="results/trim/{sample}_2.fq.gz"
-    log: 
-        "results/logs/{sample}_fastp.log"
-    threads:
-        8
-    shell: 
-        """
-(fastp -i {input.R1} -I {input.R2} -o {output.R1} -O {output.R2} --length_required 100 --thread {threads} --low_complexity_filter --detect_adapter_for_pe --trim_poly_x \
- --json results/logs/fastp/{wildcards.sample}.fastp.json \
- --html results/logs/fastp/{wildcards.sample}.fastp.html ) &> {log}
-        """
- 
-
-######################################
-## assemble external transcriptomes ##
-######################################
-
-# resources/Cirripedia_trans/
-
-rule rename_reads_external:
-    output:         
-        R1=temp("results/cirri_raw/{sample}_1.fq.gz"),
-        R2=temp("results/cirri_raw/{sample}_2.fq.gz")
-    params: 
-        fwd=lambda wildcards: get_sample_forward_cirri('{sample_id}'.format(sample_id=wildcards.sample) ), 
-        rev=lambda wildcards: get_sample_reverse_cirri('{sample_id}'.format(sample_id=wildcards.sample) )    
-    shell:  
-        """ 
-cat {params.fwd} > {output.R1} 
-cat {params.rev} > {output.R2}         
-"""
-
-rule Trim_cirri:
-    input:
-        R1="results/cirri_raw/{sample}_1.fq.gz",
-        R2="results/cirri_raw/{sample}_2.fq.gz"
-    output:
-        R1="results/cirri_trim/{sample}_1.fq.gz",
-        R2="results/cirri_trim/{sample}_2.fq.gz"
-    log:
-        "results/logs/{sample}_fastp.log"
-    threads:
-        8
-    shell:
-        """
-(fastp -i {input.R1} -I {input.R2} -o {output.R1} -O {output.R2} --length_required 100 --thread {threads} --low_complexity_fil$
- --json results/logs/fastp/{wildcards.sample}.fastp.json \
- --html results/logs/fastp/{wildcards.sample}.fastp.html ) &> {log}
-        """
-
-
-rule trinity_assembly_external:
-    input:
-         R1="results/cirri_raw/{sample}_1.fq.gz",
-         R2="results/cirri_raw/{sample}_2.fq.gz"
-    output:
-        out="results/cirri_assembly/{sample}_trinity.Trinity.fas"
-    params:
-        outdir="results/cirri_assembly/{sample}_trinity",
-        max_ram='500G'
-    threads: 27
-    envmodules:
-        "anaconda3/2021.05",
-        "trinity/2.13.2"
-    log:
-        "results/logs/cirri_assembly/{sample}_trinity.log"
-    shell:
-        "(printf 'starting Trinity assembly ...\n\n' ; Trinity --seqType fq --left {input.R1} --right {input.R2} "
-        "--CPU {threads} --SS_lib_type FR --no_version_check --max_memory {params.max_ram} --output {params.outdir} --full_cleanup ; "
-        "sleep 100 ; cp {params.outdir}.Trinity.fasta {output.out} ) &> {log} " 
-
-
-rule trinity_longest_external:
-    input:
-        "results/cirri_assembly/{sample}_trinity.Trinity.fas"
-    output:
-        "results/cirri_assembly/{sample}_longest.fas"
-    envmodules:
-        "trinity/2.13.2"
-    shell:
-        """
-$TRINITY_HOME/util/misc/get_longest_isoform_seq_per_trinity_gene.pl {input} > {output}
-"""
-
-rule add_Tax2headers_external:
-    input:
-        IN="results/cirri_assembly/{sample}_longest.fas"
-    output:
-        OUT="results/cirri_assembly_renamed/{sample}.fas"
-    params:
-        spec=lambda wildcards: get_taxon_cirri('{}'.format(wildcards.sample))
-    shell:
-        "cp {input.IN} {output.OUT} ; "
-        "sed -i 's/ .*//g' {output.OUT} ; "
-        "sed -i 's/>/>{params.spec}_/g' {output.OUT}"
-
 
 #######################
 ## Funannotate Steps ##
@@ -264,11 +112,10 @@ rule funannotate_setup:
         databases="all",
         busco="all",
         DB=config["funannotate"]["DB"]
+    threads: 
+        1
     container:
         config["funannotate"]["container"]
-    #conda:
-    #    "envs/funannotate_1.8.9.yaml"
-    threads: 1
     log:
         "results/logs/funannotate_setup.log"
     shell:
@@ -276,17 +123,16 @@ rule funannotate_setup:
 ( funannotate setup --install {params.databases} --busco_db {params.busco} --database {params.DB} ) &> {log}
 """
 
-# funannotate_1.8.9.yaml
 rule funannotate_prep:
     input:
-        Genome=config["genome"]
+        Genome=config["genome"]["file"]
     output:
-        clean="results/funannotate/genome.clean.fa",
-        sort="results/funannotate/genome.clean.sorted.fa"
-    params:
-    threads: 1
-    conda:
-        "envs/funannotate_1.8.9.yaml"
+        clean="results/funannotate/genome.clean.fas",
+        sort="results/funannotate/genome.clean.sorted.fas"
+    threads: 
+        1
+    container:
+        config["funannotate"]["container"]
     log:
         "results/logs/funannotate_clean_run.log"
     shell:
@@ -295,25 +141,213 @@ rule funannotate_prep:
 funannotate sort --input {output.clean} --out {output.sort} ) &> {log} 
 """
 
+
+
+## Repeat Masking ##
+
+rule repeat_modeler:
+    input:
+        genome="results/funannotate/genome.clean.sorted.fas"
+    output:
+        "results/repeats/MyDatabase-families.fa"
+    params:
+        database="MyDatabase",
+        work="results/repeats",
+        engine="ncbi"
+    threads: 
+        50
+    container: 
+        config["masking"]["container"]
+    log:
+        "results/logs/repeat_modeler.log"
+    shell:
+        """
+        ( [ ! -d {params.work} ] && mkdir -p {params.work} # create working directory
+        cp {input.genome} {params.work}/Genome.fasta
+        cd {params.work}
+        BuildDatabase -engine {params.engine} -name {params.database} Genome.fasta
+
+        RepeatModeler -database {params.database} -engine {params.engine} -pa {threads} ) &> {log}
+
+        """
+
+### additional step : remove proteome hits from repeat database
+
+rule repeat_masker:
+    input:
+        "results/repeats/MyDatabase-families.fa"
+    output:
+        "results/repeats/genome.fas.masked"
+    params:
+        database="MyDatabase",
+        work="results/repeats",
+        engine="ncbi"
+    threads: 
+        50
+    container: 
+        config["masking"]["container"]
+    log:
+        "results/logs/repeat_masker.log"
+    shell:
+        """
+        [ ! -d {params.work} ] && mkdir -p {params.work} # create working directory
+        cd {params.work}
+        RepeatMasker Genome.fasta -lib ../../{input} -pa {threads}
+        
+        calcDivergenceFromAlign.pl -s Assembly_div_summary Genome.fasta.cat.gz
+        createRepeatLandscape.pl -div Assembly_div_summary -g 365000000 > Genome_repeatlandscape.html
+
+        """
+
+
+## prepare Sacculina RNA-Seq data ##
+
+rule rename_reads:
+    output:
+        R1=temp("results/RNA-Seq/raw/{sample}_1.fq.gz"),
+        R2=temp("results/RNA-Seq/raw/{sample}_2.fq.gz")
+    params:
+        fwd=lambda wildcards: get_sample_forward('{sample_id}'.format(sample_id=wildcards.sample) ),
+        rev=lambda wildcards: get_sample_reverse('{sample_id}'.format(sample_id=wildcards.sample) )
+    shell:
+        """
+cat resources/RNA-Seq/{params.fwd} > {output.R1}
+cat resources/RNA-Seq/{params.rev} > {output.R2}
+
+        """
+
+
+rule Trim_RNA_Seq:
+    input:
+        R1="results/RNA-Seq/raw/{sample}_1.fq.gz",
+        R2="results/RNA-Seq/raw/{sample}_2.fq.gz"
+    output: 
+        R1="results/RNA-Seq/trim/{sample}_1.fq.gz",
+        R2="results/RNA-Seq/trim/{sample}_2.fq.gz"
+    threads:
+        8
+    conda:
+        "envs/assembly.yaml"
+    log: 
+        "results/logs/{sample}_fastp.log"
+    shell: 
+        """
+(fastp -i {input.R1} -I {input.R2} -o {output.R1} -O {output.R2} --length_required 100 --thread {threads} --low_complexity_filter --detect_adapter_for_pe --trim_poly_x \
+ --json results/logs/fastp/{wildcards.sample}.fastp.json \
+ --html results/logs/fastp/{wildcards.sample}.fastp.html ) &> {log}
+        """
+ 
+
+#####################################
+## prepare external transcriptomes ##
+#####################################
+
+# resources/Cirripedia_trans/
+
+rule rename_reads_external:
+    output:         
+        R1=temp("results/funannotate/cirri_raw/{sample}_1.fq.gz"),
+        R2=temp("results/funannotate/cirri_raw/{sample}_2.fq.gz")
+    params: 
+        fwd=lambda wildcards: get_sample_forward_cirri('{sample_id}'.format(sample_id=wildcards.sample) ), 
+        rev=lambda wildcards: get_sample_reverse_cirri('{sample_id}'.format(sample_id=wildcards.sample) )    
+    shell:  
+        """ 
+cat {params.fwd} > {output.R1} 
+cat {params.rev} > {output.R2}         
+"""
+
+rule Trim_cirri:
+    input:
+        R1="results/funannotate/cirri_raw/{sample}_1.fq.gz",
+        R2="results/funannotate/cirri_raw/{sample}_2.fq.gz"
+    output:
+        R1="results/funannotate/cirri_trim/{sample}_1.fq.gz",
+        R2="results/funannotate/cirri_trim/{sample}_2.fq.gz"
+    threads:
+        8
+    conda:
+        "envs/assembly.yaml"
+    log:
+        "results/logs/{sample}_fastp.log"
+    shell:
+        """
+(fastp -i {input.R1} -I {input.R2} -o {output.R1} -O {output.R2} --length_required 100 --thread {threads} --low_complexity_fil$
+ --json results/logs/fastp/{wildcards.sample}.fastp.json \
+ --html results/logs/fastp/{wildcards.sample}.fastp.html ) &> {log}
+        """
+
+
+rule trinity_assembly_external:
+    input:
+         R1="results/funannotate/cirri_raw/{sample}_1.fq.gz",
+         R2="results/funannotate/cirri_raw/{sample}_2.fq.gz"
+    output:
+        out="results/funannotate/cirri_assembly/{sample}_trinity.Trinity.fas"
+    params:
+        outdir="results/funannotate/cirri_assembly/{sample}_trinity",
+        max_ram='500G'
+    threads: 
+        27
+    envmodules:
+        "anaconda3/2021.05",
+        "trinity/2.13.2"
+    log:
+        "results/logs/cirri_assembly/{sample}_trinity.log"
+    shell:
+        "(printf 'starting Trinity assembly ...\n\n' ; Trinity --seqType fq --left {input.R1} --right {input.R2} "
+        "--CPU {threads} --SS_lib_type FR --no_version_check --max_memory {params.max_ram} --output {params.outdir} --full_cleanup ; "
+        "sleep 100 ; cp {params.outdir}.Trinity.fasta {output.out} ) &> {log} " 
+
+
+rule trinity_longest_external:
+    input:
+        "results/funannotate/cirri_assembly/{sample}_trinity.Trinity.fas"
+    output:
+        "results/funannotate/cirri_assembly/{sample}_longest.fas"
+    envmodules:
+        "trinity/2.13.2"
+    log:
+        "results/logs/cirri_assembly/{sample}_trinity_longest.log"
+    shell:
+        """
+$TRINITY_HOME/util/misc/get_longest_isoform_seq_per_trinity_gene.pl {input} > {output} &> {log}
+"""
+
+rule add_Tax2headers_external:
+    input:
+        IN="results/funannotate/cirri_assembly/{sample}_longest.fas"
+    output:
+        OUT="results/funannotate/cirri_assembly_renamed/{sample}.fas"
+    params:
+        spec=lambda wildcards: get_taxon_cirri('{}'.format(wildcards.sample))
+    shell:
+        "cp {input.IN} {output.OUT} ; "
+        "sed -i 's/ .*//g' {output.OUT} ; "
+        "sed -i 's/>/>{params.spec}_/g' {output.OUT}"
+
+
+
 # databases are already present in the container
 
 rule funannotate_train:
     input:
-        Genome="results/funannotate/genome.clean.sorted.fa",
+        Genome=get_masked_genome(),
         R1=print_all_forward(),
         R2=print_all_reverse(),
         check="results/funannotate/setup.ok",
     output:
-        "results/funannotate2/training/funannotate_train.pasa.gff3"
+        "results/funannotate/training/funannotate_train.pasa.gff3"
     params:
         spec=config["funannotate"]["spec"],
         max_intron=config["funannotate"]["intron"],
-        out_dir="results/funannotate2",
-    threads: 56
+        out_dir="results/funannotate",
+    threads: 
+        56
     container:
         config["funannotate"]["container"]
     log:
-        "results/logs/funannotate2_train_run.log"
+        "results/logs/funannotate_train_run.log"
     shell:
         """
 (funannotate train \
@@ -327,32 +361,34 @@ rule funannotate_train:
 """
 
 
-rule funannotate_predict2:
+rule funannotate_predict:
     input:
-        Genome="results/funannotate/genome.clean.sorted.fa",
+        Genome=get_masked_genome(),
         check="results/funannotate/setup.ok",
-        train="results/funannotate2/training/funannotate_train.pasa.gff3",
+        train="results/funannotate/training/funannotate_train.pasa.gff3",
         orthoProt="results/orthofinder/merged_orthogroup_sequences.fa",
         TSA=get_all_tsa_files(),
-        Cirri_assembled=expand("results/cirri_assembly_renamed/{cirri_sample}.fas", cirri_sample=CIRRI_SPEC)
+        Cirri_assembled=expand("results/funannotate/cirri_assembly_renamed/{cirri_sample}.fas", cirri_sample=get_taxa_list_cirri())
     output:
-        prot="results/funannotate2/predict_results/Sacculina_carcini.proteins.fa",
-        annot="results/funannotate2/predict_results/Sacculina_carcini.gff3"
+        prot="results/funannotate/predict_results/Sacculina_carcini.proteins.fa",
+        annot="results/funannotate/predict_results/Sacculina_carcini.gff3",
+        scaf="results/funannotate/predict_results/Sacculina_carcini.scaffolds.fa"
     params:
         spec=config["funannotate"]["spec"],
         max_intron=config["funannotate"]["intron"],
-        out_dir="results/funannotate2",
-    threads: 56
+        out_dir="results/funannotate",
+    threads: 
+        56
     container:
         config["funannotate"]["container"]
     log:
-        "results/logs/funannotate2_predict_run.log"
+        "results/logs/funannotate_predict_run.log"
     shell:
         """
 (
 #transfer augustus config if not present
-[ ! -d "$(pwd)/results/funannotate2/config" ] && cp -r /usr/local/config $(pwd)/results/funannotate2/
-export AUGUSTUS_CONFIG_PATH=$(pwd)/results/funannotate2/config
+[ ! -d "$(pwd)/results/funannotate/config" ] && cp -r /usr/local/config $(pwd)/results/funannotate/
+export AUGUSTUS_CONFIG_PATH=$(pwd)/results/funannotate/config
 
 #transfer genemark key to HOME / CWD
 [ ! -f $HOME/.gm_key ] && cp /opt/genemark/gm_key_64 .gm_key
@@ -364,16 +400,16 @@ funannotate predict --input {input.Genome} --transcript_evidence {input.TSA} {in
 
 # rule funannotate_update:
 #     input:
-#         Genome="results/funannotate/genome.clean.sorted.fa",
-#         annot="results/funannotate2/predict_results/Sacculina_carcini.gff3",
+#         Genome=get_masked_genome(),
+#         annot="results/funannotate/predict_results/Sacculina_carcini.gff3",
 #         R1=print_all_forward(),
 #         R2=print_all_reverse(),
 #     output:
-#         xx="results/funannotate2/someupdate"
+#         xx="results/funannotate/someupdate"
 #     params:
 #         spec=config["funannotate"]["spec"],
 #         max_intron=config["funannotate"]["intron"],
-#         out_dir="results/funannotate2",
+#         out_dir="results/funannotate",
 #     threads: 56
 #     container:
 #         config["funannotate"]["container"]
@@ -395,39 +431,62 @@ funannotate predict --input {input.Genome} --transcript_evidence {input.TSA} {in
 
 rule interproscan_funannotate:
     input:
-        "results/funannotate2/predict_results/Sacculina_carcini.proteins.fa"
+        "results/funannotate/predict_results/Sacculina_carcini.proteins.fa"
     output:
-        "results/funannotate2/interproscan.output.xml"
-    threads: 40
-    envmodules:
-        "interproscan/5.50-84.0"
+        "results/funannotate/interproscan.output.xml"
     params:
         tmp="results/funannotate/inter_temp/",
-        apps="CDD,COILS,Gene3D,HAMAP,MobiDBLite,PANTHER,Pfam,PIRSF,PRINTS,PROSITEPATTERNS,PROSITEPROFILES,SFLD,SMART,SUPERFAMILY,TIGRFAM"
+        apps=config["intreproscan_apps"]
+    threads: 
+        40
+    envmodules:
+        "interproscan/5.50-84.0"
+    log:
+        "results/logs/funannotate_interproscan.log"
     shell:
         """
-interproscan.sh -input {input} -formats xml -disable-precalc --goterms --outfile {output} --seqtype p --tempdir {params.tmp} --verbose --cpu {threads} --applications {params.apps}
+( interproscan.sh \
+    -input {input} \
+    -formats xml \
+    -disable-precalc \
+    --goterms \
+    --outfile {output} \
+    --seqtype p \
+    --tempdir {params.tmp} \
+    --verbose \
+    --cpu {threads} \
+    --applications {params.apps} ) &> {log}
 """
 
 
 rule funannotate_annotate:
     input:
-        gff="results/funannotate2/predict_results/Sacculina_carcini.gff3",
-        genome="results/funannotate2/predict_results/Sacculina_carcini.scaffolds.fa",
-        iprscan="results/funannotate2/interproscan.output.xml"
+        gff="results/funannotate/predict_results/Sacculina_carcini.gff3",
+        genome="results/funannotate/predict_results/Sacculina_carcini.scaffolds.fa",
+        iprscan="results/funannotate/interproscan.output.xml"
     output:
-        touch("results/funannotate2/annotate_step.complete")
+        touch("results/funannotate/annotate_step.complete")
     params:
         species=config["funannotate"]["spec"],
-        predict_dir="results/funannotate2/predict_results",
+        predict_dir="results/funannotate/predict_results",
         busco=config["funannotate"]["busco_db"],
-        out_dir="results/funannotate2/annotated",
-    threads: 40
+        out_dir="results/funannotate/annotated",
+    threads: 
+        40
     container:
         config["funannotate"]["container"]
+    log:
+        "results/logs/funannotate_annotate.log"
     shell:
         """
-funannotate annotate --input {params.predict_dir} --gff {input.gff} --fasta {input.genome} --iprscan {input.iprscan} --busco_db {params.busco} --out {params.out_dir} --cpus {threads}
+( funannotate annotate \
+    --input {params.predict_dir} \
+    --gff {input.gff} \
+    --fasta {input.genome} \
+    --iprscan {input.iprscan} \
+    --busco_db {params.busco} \
+    --out {params.out_dir} \
+    --cpus {threads} ) &> {log}
         """
 
 
@@ -442,12 +501,14 @@ rule run_orthofinder:
     output:
         dir=directory("results/orthofinder/run_1"),
         check=touch("results/orthofinder/run_1.ok"),
-    threads:
-        40
     params:
         input="resources/orthofinder/",
         base="results/orthofinder/run_1",
         postfix="my_output"
+    threads:
+        40
+    conda:
+        "envs/orthofinder.yaml"
     log:
         "results/logs/orthofinder/run1.log"
     shell:
@@ -462,7 +523,8 @@ rule merge_ortho_seqs:
         OrthoOK="results/orthofinder/run_1.ok",
     output:
         "results/orthofinder/merged_orthogroup_sequences.fa"
-    threads: 1
+    threads: 
+        1
     shell:
         """
 cat results/orthofinder/run_1/Results_my_output/Orthogroup_Sequences/*.fa > {output}
@@ -472,15 +534,17 @@ cat results/orthofinder/run_1/Results_my_output/Orthogroup_Sequences/*.fa > {out
 rule extend_orthofinder:
     input:
         OrthoOK="results/orthofinder/run_1.ok",
-        Pep="results/funannotate2/predict_results/Sacculina_carcini.proteins.fa"
+        Pep="results/funannotate/predict_results/Sacculina_carcini.proteins.fa"
     output:
         dynamic("results/orthofinder/run_1/Results_my_output/WorkingDirectory/OrthoFinder/Results_my_output2/Orthogroup_Sequences/{orthogroup}.fa"),
-    threads:
-        40
     params:
         input="results/orthofinder/new_fasta_directory",
         wrkdr="results/orthofinder/run_1/Results_my_output/WorkingDirectory/",
         postfix="my_output2"
+    threads:
+        40
+    conda:
+        "envs/orthofinder.yaml"
     shell:
         """
 mkdir -p {params.input}/
@@ -493,12 +557,15 @@ rule rerun_orthofinder_root:
         dynamic("results/orthofinder/run_1/Results_my_output/WorkingDirectory/OrthoFinder/Results_my_output2/Orthogroup_Sequences/{orthogroup}.fa")
     output:
         touch("results/orthofinder/run_3.ok")
-    threads: 40
     params:
         input="results/orthofinder/new_fasta_directory",
         wrkdr="results/orthofinder/run_1/Results_my_output/WorkingDirectory/",
         postfix="NewTree",
-        outgroups="Notodromas_monacha,Darwinula_stevensoni"
+        outgroups=config["orthofinder"]["outgroup"]
+    threads: 
+        40
+    conda:
+        "envs/orthofinder.yaml"
     shell:
         """
 echo {params.outgroups} | gotree reroot outgroup -i results/orthofinder/run_1/Results_my_output/WorkingDirectory/OrthoFinder/Results_my_output2/Species_Tree/SpeciesTree_rooted.txt -l - > \
@@ -512,14 +579,14 @@ rule interproscan_orthofinder:
     input:
         "results/orthofinder/run_1/Results_my_output/WorkingDirectory/OrthoFinder/Results_my_output2/Orthogroup_Sequences/{orthogroup}.fa"
     output:
-        "results/orthofinder/interproscan/{orthogroup}.tsv"
-    threads: 5
-    envmodules:
-        "interproscan/5.50-84.0"
+        dynamic("results/orthofinder/interproscan/{orthogroup}.tsv")
     params:
         tmp="results/orthofinder/inter_temp/",
-        apps="CDD,COILS,Gene3D,HAMAP,MobiDBLite,PANTHER,Pfam,PIRSF,PRINTS,PROSITEPATTERNS,PROSITEPROFILES,SFLD,SMART,SUPERFAMILY,TIGRFAM"
-
+        apps=config["intreproscan_apps"]
+    threads: 
+        5
+    envmodules:
+        "interproscan/5.50-84.0"
     shell:
         """
 interproscan.sh -input {input} -formats tsv -disable-precalc --goterms --outfile {output} --seqtype p --tempdir {params.tmp} --verbose --cpu {threads} --applications {params.apps}
@@ -533,7 +600,7 @@ interproscan.sh -input {input} -formats tsv -disable-precalc --goterms --outfile
 
 rule busco_genome:
     input:
-        Genome="results/funannotate/genome.clean.sorted.fa"
+        Genome=get_masked_genome()
     output:
         "results/busco_analysis/busco_genome/short_summary.specific.arthropoda_odb10.busco_genome.txt"
     params:
@@ -541,7 +608,10 @@ rule busco_genome:
         lineage="arthropoda_odb10",
         mode="genome",
         config="resources/busco_config.ini"
-    threads: 20
+    threads: 
+        20
+    conda:
+        "envs/busco.yaml"
     log:
         "results/logs/busco_analysis/busco_genome.log"
     shell:
@@ -550,19 +620,22 @@ busco -f -m {params.mode} -i {input} -o {params.dir} -l {params.lineage} --cpu {
         """
 
 
-rule busco_fun_prot2:
+rule busco_fun_prot:
     input:
-        "results/funannotate2/predict_results/Sacculina_carcini.proteins.fa"
+        "results/funannotate/predict_results/Sacculina_carcini.proteins.fa"
     output:
-        "results/busco_analysis/busco_fun_prot2/short_summary.specific.arthropoda_odb10.busco_fun_prot2.txt"
+        "results/busco_analysis/busco_fun_prot/short_summary.specific.arthropoda_odb10.busco_fun_prot.txt"
     params:
-        dir="busco_fun_prot2",
+        dir="busco_fun_prot",
         lineage="arthropoda_odb10",
         mode="protein",
         config="resources/busco_config.ini"
-    threads: workflow.cores
+    threads: 
+        workflow.cores
+    conda:
+        "envs/busco.yaml"
     log:
-        "results/logs/busco_analysis/busco_fun_prot2.log"
+        "results/logs/busco_analysis/busco_fun_prot.log"
     shell:
         """
 ( busco -f -m {params.mode} -i {input} -o {params.dir} -l {params.lineage} --cpu {threads} --config {params.config} ) &> {log}
@@ -572,16 +645,19 @@ rule busco_fun_prot2:
 rule busco_summary:
     input:
         "results/busco_analysis/busco_genome/short_summary.specific.arthropoda_odb10.busco_genome.txt",
-        "results/busco_analysis/busco_fun_prot2/short_summary.specific.arthropoda_odb10.busco_fun_prot2.txt",
+        "results/busco_analysis/busco_fun_prot/short_summary.specific.arthropoda_odb10.busco_fun_prot.txt",
     output:
         "results/busco_analysis/busco_summary/busco_figure.png"
     params:
         dir="results/busco_analysis/busco_summary"
-    threads: 1
+    threads: 
+        1
+    conda:
+        "envs/busco.yaml"
     shell:
         """
 for file in {input}; do cp $file {params.dir}/ ; done
-generate_plot.py -wd {params.dir}
+BUSCO_plot.py -wd {params.dir}
         """
 
 
@@ -598,7 +674,10 @@ rule busco_tsa:
         lineage="arthropoda_odb10",
         mode="transcriptome",
         config="resources/busco_config.ini"
-    threads: 20
+    threads:
+        20
+    conda:
+        "envs/busco.yaml"
     log:
         "results/logs/busco_tsa/busco_{species}.log"
     shell:
@@ -620,7 +699,10 @@ rule busco_cirri:
         lineage="arthropoda_odb10",
         mode="transcriptome",
         config="resources/busco_config.ini"
-    threads: 20
+    threads: 
+        20
+    conda:
+        "envs/busco.yaml"
     log:
         "results/logs/busco_cirri/busco_{cirri_sample}.log"
     shell:

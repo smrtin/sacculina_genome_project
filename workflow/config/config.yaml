@@ -7,8 +7,12 @@
 # genome sequence
 
 genome: 
-    "resources/saca8_scp1p2_v0.2.fasta.masked"
+    file:
+        "resources/saca8_scp1p2_v0.2.fasta"
+    masking:
+        'yes' #"no"
 
+        
 # information about the samples for read processing
 
 sample_info: 
@@ -39,7 +43,12 @@ funannotate:
     container: "/share/scientific_bin/singularity/containers/funannotate_with_genemark.sif"
     busco_db: "arthropoda"
 
+intreproscan_apps:
+    "CDD,PANTHER,Pfam,PRINTS,SMART,SUPERFAMILY,TIGRFAM"
+    #"CDD,COILS,Gene3D,HAMAP,MobiDBLite,PANTHER,Pfam,PIRSF,PRINTS,PROSITEPATTERNS,PROSITEPROFILES,SFLD,SMART,SUPERFAMILY,TIGRFAM"
 
+orthofinder:
+    outgroup: "Notodromas_monacha,Darwinula_stevensoni"
 # the above container is missing genemark
 # /share/scientific_bin/singularity/containers/fun_box3.sif
 # "resources/funannotate_db-1.8.9/"
