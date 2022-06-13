@@ -11,7 +11,7 @@
 
 module load singularity/3.6.0 
 module load anaconda3/2020.02
-conda activate ERTE_annotation
+conda activate sacculina_genome_project
 
 #one core will be used by snakemake to monitore the other processes
 THREADS=$(expr ${NSLOTS} - 1)

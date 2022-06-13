@@ -9,8 +9,8 @@
 #$ -pe smp 56
 
 
-module load anaconda3/2020.02
-conda activate ERTE_annotation
+module load anaconda3/2022.05
+conda activate sacculina_genome_project
 
 #one core will be used by snakemake to monitore the other processes
 THREADS=$(expr ${NSLOTS} - 1)
@@ -25,11 +25,5 @@ snakemake \
     --verbose \
     --printshellcmds \
     --reason 
-
-
-
-# snakemake --use-envmodules --cores ${THREADS} --verbose --printshellcmds --rerun-incomplete
-# download and setup of conda environments must be performed on headnode...
-# --use-conda --use-singularity --cores 1 --conda-create-envs-only
 
 
