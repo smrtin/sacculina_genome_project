@@ -29,9 +29,10 @@ def get_args(argv=None):
     '''Parses the command line options.\n
     Returns populated namespace.
     '''
-    parser = argparse.ArgumentParser(description="collect information of species barcodes from NCBI or Bold and occurences on GBIF.")
+    parser = argparse.ArgumentParser(description="download genomes and gff from NCBI and extract longest isoform per gene.")
     parser.add_argument("-i", "--infile", help="Input file name ")
-    parser.add_argument("-o", "--outfile",help="output file name ")
+    parser.add_argument("-o", "--outdir",help="output directory name ", default="resources/orthofinder")
+    parser.add_argument("-t", "--tmpdir",help="download directory name ", default="tmp_download")
     
     parser.add_argument("-v", "--version", action="store_true",
                         help="output version information and exit")
@@ -43,10 +44,10 @@ def get_args(argv=None):
     return parser.parse_args(argv)
 
 
-def download_genome(taxon, genome_url):
+def download_genome(taxon, genome_url, dir_name):
     parts=(taxon,'genome','fas','gz')
-    genome_path='.'.join(parts[:-1])
-    genome_path_compressed='.'.join(parts)
+    genome_path=os.path.join(dir_name,'.'.join(parts[:-1]))
+    genome_path_compressed=os.path.join(dir_name,'.'.join(parts))
 
     if os.path.exists(genome_path) :
         print('\tGenome file already exists.\tSkipping download')
@@ -66,11 +67,11 @@ def download_genome(taxon, genome_url):
         fout.close()
 
 
-def download_gff(taxon, gff_url):
+def download_gff(taxon, gff_url, dir_name):
 
     parts=(taxon,'gff','gz')
-    gff_path='.'.join(parts[:-1])
-    gff_path_compressed='.'.join(parts)
+    gff_path=os.path.join(dir_name,'.'.join(parts[:-1]))
+    gff_path_compressed=os.path.join(dir_name,'.'.join(parts))
 
     if os.path.exists(gff_path) :
         print('\tGFF file already exists.\tSkipping download')
@@ -81,7 +82,7 @@ def download_gff(taxon, gff_url):
         subprocess.run(command, stdout=fout)
         fout.close()
     else:
-        print('\tGFF download starting...')
+        print('\n\tGFF download starting...')
         wget.download(gff_url, gff_path_compressed)
 
         fout = open(gff_path, 'wb')
@@ -90,17 +91,17 @@ def download_gff(taxon, gff_url):
         fout.close()
 
 
-def extract_proteins(taxon):
+def extract_proteins(taxon , dir_name):
     collection={}
-    genome='.'.join([taxon,'genome','fas'])
-    gff='.'.join([taxon,'gff'])
+    genome=os.path.join(dir_name,'.'.join([taxon,'genome','fas']))
+    gff=os.path.join(dir_name,'.'.join([taxon,'gff']))
     
     command=['gffread', gff , '-g' ,genome ,'-y', '-','-F']
     #print('running : {cmd}'.format(cmd=command))
     p = subprocess.run(command,capture_output=True )
     Seq_Dict=SeqIO.to_dict(SeqIO.parse(StringIO(p.stdout.decode()), 'fasta'))
 
-    print('\n\tNumber of <gffread> generated Protein sequences: {total}'.format(total=len(Seq_Dict.keys())))
+    print('\n\tNumber of GFFREAD generated Protein sequences: {total}'.format(total=len(Seq_Dict.keys())))
 
     for key in Seq_Dict.keys():
         description=Seq_Dict[key].description.split(" ",1)[1]
@@ -164,13 +165,13 @@ def read_gff(file):
                     if len(genes[feat.id]) >= 2 :
                         genes_more_than_one +=1
 
-    print('\tSummary of gff file:\n\tprotein-coding genes: {}\tproteins: {}\tgene with multiple proteins: {}'.format(total_genes, total_proteins, genes_more_than_one))    
+    print('\n\tSummary of gff file:\n\tprotein-coding genes: {}\n\ttotal-proteins: {}\n\tgene with multiple proteins: {}\n'.format(total_genes, total_proteins, genes_more_than_one))    
     in_handle.close()
 
     return genes
     
-def print_output(tax,prot):
-    file_name='.'.join([tax,'fas'])
+def print_output(tax,prot, dir_name):
+    file_name=os.path.join(dir_name,'.'.join([tax,'fas']))
 
     with open(file_name , 'w') as outfile:
         for id in prot.keys():
@@ -183,19 +184,27 @@ if __name__ == "__main__":
 
     args = get_args()
     data = read_csv(args.infile)
-    #print('done..{data}'.format(data=data))
-    #with Bar('Processing', max=len(data)) as bar:
+    
+    if not os.path.exists(args.outdir):
+        os.makedirs(args.outdir)
+        print("Directory " , args.outdir ,  " Created ")
+    if not os.path.exists(args.tmpdir):
+        os.makedirs(args.tmpdir)
+        print("Directory " , args.tmpdir ,  " Created ")
+        
+
     for row in data:
         print('Working on taxon: {tax}'.format(tax=row['Taxon']))
         taxon=row['Taxon']
-    #        bar.next()
-        download_genome(taxon,row['Genome_link'])
-        download_gff(taxon ,row['GFF_link'])
+
+        download_genome(taxon,row['Genome_link'],args.tmpdir)
+        download_gff(taxon ,row['GFF_link'],args.tmpdir)
         
-        prot_seq=extract_proteins(row['Taxon']) 
-        gff_file='.'.join([taxon , 'gff'])
+        prot_seq=extract_proteins(row['Taxon'],args.tmpdir) 
+
+        gff_file=os.path.join(args.tmpdir,'.'.join([taxon , 'gff']))
         gene_dict=read_gff(gff_file)
         long_proteins=filter_longest_per_gene(prot_seq,gene_dict)
 
-        print('\t{} longest proteins extracted'.format(len(long_proteins.keys())))
-        print_output(taxon,long_proteins)
+        print('\t{} longest proteins extracted\n'.format(len(long_proteins.keys())))
+        print_output(taxon,long_proteins, args.outdir)
