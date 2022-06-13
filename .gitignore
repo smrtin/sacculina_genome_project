@@ -13,3 +13,12 @@ results/*
 # ignore all external files
 
 resources/*
+!resources/genome/.keep
+
+temp/*
+!temp/.keep
+
+funannotate-setup.log
+external_sequences.list
+tmp_download/*
+.RepeadMasker*
